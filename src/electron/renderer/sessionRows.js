@@ -377,6 +377,7 @@
         unattributedLabel: options.unattributedLabel
       }),
       subtitle: subtitleParts.join(' · '),
+      activitySummary: subtitleParts.join(' · '),
       running: running || undefined,
       activityState,
       // Decided by the shared gate, not by `running`: it follows the recency
@@ -395,6 +396,7 @@
       color: colors[client] || stable(key, palette),
       stale: false,
       client,
+      clientLabel,
       backgroundReview: isBackgroundReviewSession(session) || undefined,
       sortTime: sessionTimestampValue(session),
       title: `${clientLabel} session ${sessionIdLabel(session?.sessionId || key)}`
@@ -408,6 +410,7 @@
     const stable = typeof options.stableColor === 'function' ? options.stableColor : stableColor;
     const palette = options.fallbackColors || fallbackColors;
     const archivedLabel = options.archivedLabel || 'Archived';
+    const subagentLabel = options.subagentLabel || 'Subagent';
     const now = options.now || new Date();
     // A day may contain only Claude usage from a bot conversation that used a
     // grok-bot model earlier. Join evidence by conversation id, never by model.
@@ -437,6 +440,9 @@
         // enforces through `isArchivedSession`.
         const activityState = sessionActivityState(session, now);
         const running = activityState === 'running';
+        const backgroundReview = isBackgroundReviewSession(session);
+        const parentSessionId = textValue(session?.parentSessionId);
+        const subagent = Boolean(parentSessionId) && !backgroundReview;
         const activityParts = [
           archived ? archivedLabel : '',
           sessionActivityLabel(session, now),
@@ -444,6 +450,8 @@
           cacheHitLabel(session),
           tokenRateLabel(session)
         ].filter(Boolean);
+        const activitySummary = activityParts.join(' · ');
+        if (subagent) activityParts.splice(archived ? 1 : 0, 0, subagentLabel);
         return {
           key: `session:${key}`,
           kind: 'session',
@@ -454,6 +462,9 @@
           }),
           subtitle: (sessionTitle ? titleParts : activityParts).join(' · '),
           activity: sessionTitle ? activityParts.join(' · ') : undefined,
+          // Group members show their role beside the tool/model, separately
+          // from the activity line. Keep archive status with the activity.
+          activitySummary,
           detail: sessionIdLabel(sessionId),
           value,
           cost: finiteNumber(session?.costUsd),
@@ -467,7 +478,14 @@
           contextSnapshot: !archived ? sessionLive.sessionContextRow(session) : undefined,
           promptCache: sessionLive.sessionPromptCacheForRow(session, now),
           client,
-          backgroundReview: isBackgroundReviewSession(session) || undefined,
+          clientLabel,
+          titled: Boolean(sessionTitle) || undefined,
+          // Raw per-model tokens, so a group row can rebuild its model label and
+          // tooltip from every member rather than from one of them.
+          modelTokens: session?.models,
+          backgroundReview: backgroundReview || undefined,
+          subagent: subagent || undefined,
+          parentKey: parentSessionId ? `session:${client}:${parentSessionId}` : undefined,
           grokBot: (isGrokBotSession(session, key) || (client === 'cursor'
             && botIds.has(textValue(session?.sessionId) || key.replace(/^cursor:/, '')))) || undefined,
           sortTime: sessionTimestampValue(session),
@@ -495,6 +513,100 @@
       ...options, id: 'codex-auto-review', client: 'codex',
       label: options.label || 'Codex Auto Review'
     })];
+  }
+
+  // A subagent session folds under the session that started it while that
+  // parent is visible in the same list. Background reviews keep their own
+  // global group and Grok Bot runs theirs, so neither side of a link may be one.
+  // A child whose parent is outside the period stays a row of its own.
+  function groupSubagentRows(rows, options = {}) {
+    const list = Array.isArray(rows) ? rows : [];
+    const eligible = row => row?.kind === 'session' && row.backgroundReview !== true && row.grokBot !== true;
+    const byKey = new Map(list.filter(eligible).map(row => [row.key, row]));
+    // A subagent's own subagents join the top-most visible ancestor's group; a
+    // cycle stops at the first repeat rather than looping.
+    const rootOf = (row) => {
+      const seen = new Set();
+      let current = row;
+      while (current.parentKey && !seen.has(current.key)) {
+        seen.add(current.key);
+        const parent = byKey.get(current.parentKey);
+        if (!parent) break;
+        current = parent;
+      }
+      return current;
+    };
+    const children = new Map();
+    const grouped = new Set();
+    for (const row of byKey.values()) {
+      if (!row.parentKey) continue;
+      const root = rootOf(row);
+      if (root === row) continue;
+      if (!children.has(root.key)) children.set(root.key, []);
+      children.get(root.key).push(row);
+      grouped.add(row.key);
+    }
+    if (grouped.size === 0) return list;
+    return list
+      .filter(row => !grouped.has(row?.key))
+      .map(row => children.has(row?.key) ? subagentGroupRow(row, children.get(row.key), options) : row);
+  }
+
+  // The group row is the parent's own row with the group's totals: members are
+  // disjoint sessions, so their sum is the whole group and nothing is counted
+  // twice. Its id moves to the group page, where the parent is listed first.
+  function subagentGroupRow(parent, members, options) {
+    const ordered = [...members].sort((a, b) => finiteNumber(b.sortTime) - finiteNumber(a.sortTime));
+    const groupRows = [parent, ...ordered];
+    const value = groupRows.reduce((sum, row) => sum + finiteNumber(row.value), 0);
+    const cost = groupRows.reduce((sum, row) => sum + finiteNumber(row.cost), 0);
+    const unpricedTokens = groupRows.reduce((sum, row) => sum + finiteNumber(row.unpricedTokens), 0);
+    const activityState = ['running', 'waiting'].find(state => groupRows.some(row => row.activityState === state))
+      || parent.activityState;
+    const countLabel = typeof options.countLabel === 'function'
+      ? options.countLabel(members.length) : `${members.length} subagents`;
+    const id = `subagents:${String(parent.key).replace(/^session:/, '')}`;
+    // The model label and its tooltip describe the tokens the row shows, which
+    // are the whole group's, so they are rebuilt from every member's models.
+    const models = {};
+    for (const row of groupRows) {
+      for (const [model, tokens] of Object.entries(row.modelTokens || {})) {
+        models[model] = (models[model] || 0) + finiteNumber(tokens);
+      }
+    }
+    const group = { client: parent.client, models, totalTokens: value };
+    const modelLabel = sessionModelLabel(group);
+    const titleParts = [parent.clientLabel || parent.client, modelLabel].filter(Boolean).join(' · ');
+    const base = { ...parent };
+    delete base.unpricedTokens;
+    return {
+      ...base,
+      key: `session-group:${id}`,
+      kind: 'summary',
+      // An untitled row is named by client and model, so its name follows the
+      // group's models too.
+      name: parent.titled ? parent.name : titleParts,
+      modelLabel,
+      modelTooltipEntries: sessionModelTooltipEntries(group, { unattributedLabel: options.unattributedLabel }),
+      modelTokens: models,
+      // Keep the tool/model reading order; the renderer reserves space for the
+      // count while the preceding text can shrink in a narrow window.
+      subtitle: [parent.titled ? titleParts : parent.subtitle, countLabel].filter(Boolean).join(' · '),
+      subtitleIdentity: parent.titled ? titleParts : parent.subtitle,
+      subagentCountLabel: countLabel,
+      detail: parent.activity ? '' : parent.detail,
+      groupDetail: countLabel,
+      value,
+      cost,
+      ...(unpricedTokens > 0 ? { unpricedTokens } : {}),
+      barValue: value,
+      running: groupRows.some(row => row.running === true) || undefined,
+      activityState,
+      sortTime: Math.max(...groupRows.map(row => finiteNumber(row.sortTime))),
+      sessionGroup: id,
+      subagentGroup: true,
+      groupRows
+    };
   }
 
   function sessionSummaryRow(rows, options) {
@@ -536,7 +648,7 @@
     for (const row of Array.isArray(rows) ? rows : []) {
       (row?.grokBot === true ? bots : primary).push(row);
     }
-    const grouped = groupBackgroundReviewRows(primary, options.backgroundReviews);
+    const grouped = groupBackgroundReviewRows(groupSubagentRows(primary, options.subagents), options.backgroundReviews);
     if (bots.length > 0) grouped.push(sessionSummaryRow(bots, {
       // These source ids include internal subagents, not just user chat rooms.
       countLabel: (count) => `${count} activity records`,
@@ -575,6 +687,7 @@
     compactSessionTime,
     groupBackgroundReviewRows,
     groupSessionRows,
+    groupSubagentRows,
     grokBotSessionIdsForMaps,
     isGrokBotSession,
     sessionRowDetailAvailable,

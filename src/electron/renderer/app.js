@@ -2045,7 +2045,8 @@ document.addEventListener('pointerdown', (event) => {
 let homeSessionRenderPending = false;
 const overflowText = window.TokenMonitorOverflowText.create({
   document, window, prefersReducedMotion,
-  enabled: element => Boolean(element.closest('.session-mode, .home-session-row') || element.id === 'syncConnectionEndpoint'),
+  enabled: element => !element.classList.contains('has-subagent-count')
+    && Boolean(element.closest('.session-mode, .home-session-row') || element.id === 'syncConnectionEndpoint'),
   onLeave: () => requestAnimationFrame(() => {
     if (homeSessionRenderPending && state.breakdown === 'home'
       && visibleStatsSurface() === 'main' && state.stats) renderHome();
@@ -2368,7 +2369,7 @@ function updateRowLive(row, activityState, activityAt) {
   dot.classList.add('pulse');
 }
 
-function updateRow(row, { name, subtitle, activity, detail, value, cost, unpricedTokens, barValue, max, color, barBackground, accordionRows, deviceDetail, stale, platform, local, client, kind, modelSource, cacheReadTokens, outputTokens, unclassifiedTokens, modelRows, modelLabel, modelTooltipEntries, tokenDataUnavailable, sessionDetailAvailable, sessionGroup, running, activityState, context, promptCache, contextSnapshot, sortTime }) {
+function updateRow(row, { name, subtitle, subtitleIdentity, subagentCountLabel, activity, detail, value, cost, unpricedTokens, barValue, max, color, barBackground, accordionRows, deviceDetail, stale, platform, local, client, kind, modelSource, cacheReadTokens, outputTokens, unclassifiedTokens, modelRows, modelLabel, modelTooltipEntries, tokenDataUnavailable, sessionDetailAvailable, sessionGroup, running, activityState, context, promptCache, contextSnapshot, sortTime }) {
   const width = rowWidth(barValue, max);
   const isExpanded = row.classList.contains('expanded');
   // `running` still drives the row class for layout, but the mark's own state
@@ -2408,6 +2409,24 @@ function updateRow(row, { name, subtitle, activity, detail, value, cost, unprice
   const titleEl = row.querySelector('.row-title');
   setHoverMarqueeText(titleEl, name);
   const subtitleEl = row.querySelector('.row-subtitle');
+  let subtitleTextEl = subtitleEl;
+  const splitSubtitle = Boolean(subagentCountLabel);
+  subtitleEl.classList.toggle('has-subagent-count', splitSubtitle);
+  if (splitSubtitle) {
+    subtitleTextEl = subtitleEl.querySelector('.session-subtitle-identity');
+    if (!subtitleTextEl) {
+      subtitleTextEl = document.createElement('span');
+      subtitleTextEl.className = 'session-subtitle-identity';
+      const count = document.createElement('span');
+      count.className = 'session-subagent-count';
+      const content = subtitleEl.querySelector('.overflow-text-content') || subtitleEl;
+      content.replaceChildren(subtitleTextEl, count);
+      bindHoverMarquee(subtitleTextEl);
+    }
+    subtitleEl.querySelector('.session-subagent-count').textContent = `${subtitleIdentity ? ' · ' : ''}${subagentCountLabel}`;
+    overflowText.update(subtitleEl);
+  }
+  const subtitleText = splitSubtitle ? subtitleIdentity || '' : subtitle;
   // A multi-model session abbreviates to "N models"; that label opens the same
   // tooltip the context gauge carries, one row per model with its tokens and
   // share of the session. A titled row prints the label inside the
@@ -2417,18 +2436,18 @@ function updateRow(row, { name, subtitle, activity, detail, value, cost, unprice
   // chrome, so there is nothing extra on a single-model row.
   const modelEntries = Array.isArray(modelTooltipEntries) && modelTooltipEntries.length > 1
     ? modelTooltipEntries : null;
-  const subtitleShowsModel = Boolean(modelEntries && modelLabel && String(subtitle || '').endsWith(modelLabel));
+  const subtitleShowsModel = Boolean(modelEntries && modelLabel && String(subtitleText || '').endsWith(modelLabel));
   if (subtitleShowsModel) {
     const models = document.createElement('span');
     models.className = 'session-models';
     models.textContent = modelLabel;
     // Inside the marquee's own wrapper, so a long line still scrolls on hover.
-    const subtitleContent = subtitleEl.querySelector('.overflow-text-content') || subtitleEl;
-    subtitleContent.replaceChildren(document.createTextNode(subtitle.slice(0, -modelLabel.length)), models);
-    overflowText.update(subtitleEl);
+    const subtitleContent = subtitleTextEl.querySelector('.overflow-text-content') || subtitleTextEl;
+    subtitleContent.replaceChildren(document.createTextNode(subtitleText.slice(0, -modelLabel.length)), models);
+    overflowText.update(subtitleTextEl);
     limitWindowsView.setDetailTooltip(models, modelEntries);
   } else {
-    setHoverMarqueeText(subtitleEl, subtitle);
+    setHoverMarqueeText(subtitleTextEl, subtitleText);
   }
   if (!subtitleShowsModel && modelEntries && modelLabel && String(name || '').endsWith(modelLabel)) {
     limitWindowsView.setDetailTooltip(titleEl, modelEntries);
@@ -2856,6 +2875,7 @@ function rawSessionRowsForPeriod(period) {
     stableColor,
     fallbackColors: fallbackModelColors,
     archivedLabel: t('session.archived'),
+    subagentLabel: t('sessions.subagent'),
     unattributedLabel: t('dashboard.tooltip.unclassified'),
     sourcePeriods: state.stats?.periods,
     grokBotSessionIds: state.stats?.grokBotSessionIds,
@@ -2868,6 +2888,10 @@ function sessionRowsForPeriod(period) {
   if (rows.length > 0) {
     rows.sort((a, b) => b.sortTime - a.sortTime || b.value - a.value || b.cost - a.cost || a.name.localeCompare(b.name));
     return sessionRowsApi.groupSessionRows(rows, {
+      subagents: {
+        countLabel: (count) => t('sessions.subagentCount', { count }),
+        unattributedLabel: t('dashboard.tooltip.unclassified')
+      },
       backgroundReviews: {
         label: t('sessions.backgroundReviews'),
         countLabel: (count) => t('sessions.backgroundReviewCount', { count }),
@@ -4028,7 +4052,7 @@ function limitDetailTooltipShouldHoldRender() {
 }
 
 function sessionTooltipShouldHoldRender() {
-  return Boolean(document.querySelector('.home-session-row .is-hover-reading, .home-session-meta .limit-detail-tooltip-wrap:hover, .home-session-meta .limit-detail-tooltip-wrap:focus-within, .row-context.limit-detail-tooltip-wrap:hover, .row-context.limit-detail-tooltip-wrap:focus-within, .row-label .limit-detail-tooltip-wrap:hover, .row-label .limit-detail-tooltip-wrap:focus-within, .session-group-run .is-hover-reading, .session-group-run:focus-within, .detail-ex-title.limit-detail-tooltip-wrap:hover, .detail-ex-title.limit-detail-tooltip-wrap:focus-within'));
+  return Boolean(document.querySelector('.home-session-row .is-hover-reading, .home-session-meta .limit-detail-tooltip-wrap:hover, .home-session-meta .limit-detail-tooltip-wrap:focus-within, .row-context.limit-detail-tooltip-wrap:hover, .row-context.limit-detail-tooltip-wrap:focus-within, .row-label .limit-detail-tooltip-wrap:hover, .row-label .limit-detail-tooltip-wrap:focus-within, .session-group-run .is-hover-reading, .session-group-run:focus-within, .session-group-run .limit-detail-tooltip-wrap:hover, .session-group-run .limit-detail-tooltip-wrap:focus-within, .detail-ex-title.limit-detail-tooltip-wrap:hover, .detail-ex-title.limit-detail-tooltip-wrap:focus-within'));
 }
 
 function flushPendingLimitDetailTooltipRender() {
@@ -4651,10 +4675,13 @@ function applySessionDetailResult(request, options) {
   renderSessionDetail(options);
 }
 
-async function openSessionDetail({ client, sessionId, sessionCost, title, returnTo = null }) {
+async function openSessionDetail({ client, sessionId, sessionCost, title, returnTo = null, titleFollowsSession = false }) {
+  // A review run is headed by model and time; a named group run (a subagent, a
+  // Grok Bot record) is headed by its session title and follows title display.
+  const fixedGroupHeading = returnTo?.kind === 'session-group' && titleFollowsSession !== true;
   const request = { kind: 'session', client, sessionId, sessionCost,
-    title: state.settings?.sessionTitlesEnabled === false && returnTo?.kind !== 'session-group' ? '' : title,
-    period: state.period, detail: null, returnTo };
+    title: state.settings?.sessionTitlesEnabled === false && !fixedGroupHeading ? '' : title,
+    period: state.period, detail: null, returnTo, titleFollowsSession: titleFollowsSession === true };
   state.openSession = request;
   renderSessionDetail({ loading: true });
   try {
@@ -4733,7 +4760,7 @@ function sessionDetailTitle() {
   const request = state.openSession;
   // Group runs use a model/time heading, which is independent of session
   // title visibility. Ordinary Details follow the current session metadata.
-  if (request?.returnTo?.kind === 'session-group') return request.title;
+  if (request?.returnTo?.kind === 'session-group' && request.titleFollowsSession !== true) return request.title;
   if (state.settings?.sessionTitlesEnabled === false) return '';
   const period = request?.period || state.period;
   const session = request?.client === 'reasonix'
@@ -4744,18 +4771,53 @@ function sessionDetailTitle() {
 
 function refreshSessionDetailHeading() {
   if (state.openSession?.kind !== 'session') return;
+  // The group a Details page returns to is labelled by its summary, and a
+  // subagent group's summary quotes the parent's title. Follow the current
+  // stats so the back label, and the group page it returns to, honour title
+  // display like every other surface.
+  const group = state.openSession.returnTo;
+  const period = group?.kind === 'session-group' && group.summary?.key
+    ? state.stats?.periods?.[group.period || state.period] : null;
+  if (period) {
+    const rows = sessionRowsForPeriod(period);
+    const memberKey = `session:${state.openSession.client}:${state.openSession.sessionId}`;
+    const holds = (row) => row.groupRows?.some((member) => member.key === memberKey);
+    // The same group counts only while it still holds this session: a child
+    // moved to another parent must not return to its old one.
+    const latest = rows.find((row) => row.key === group.summary.key && holds(row));
+    if (latest) {
+      group.summary = latest;
+    } else {
+      // The group is gone or no longer holds this session (its parent left the
+      // list, or the session now sits under another parent). A cached summary
+      // would keep quoting titles the current stats no longer carry, so return
+      // to whichever group holds this session now, or to Sessions when none does.
+      const holder = rows.find(holds);
+      state.openSession.returnTo = holder ? { kind: 'session-group', period: group.period, summary: holder } : null;
+    }
+  }
   const head = els.sessionDetailHead;
-  if ((head.querySelector('.detail-heading')?.textContent || '') === sessionDetailTitle()) return;
+  if (state.openSession.headingSignature === sessionDetailHeadingSignature()) return;
   // Retain the body, loading/error state and sort control. Unchanged headings
   // also retain their hover-reading motion through periodic stats updates.
   head.replaceChildren(sessionDetailBackButton(), ...Array.from(head.children).slice(1));
 }
 
+function sessionDetailBackLabel() {
+  return state.openSession?.returnTo?.kind === 'session-group'
+    ? state.openSession.returnTo.summary?.name || t('sessions.backgroundReviews') : (t('sessions') || 'Sessions');
+}
+
+function sessionDetailHeadingSignature() {
+  return JSON.stringify([sessionDetailTitle(), sessionDetailBackLabel()]);
+}
+
 function sessionDetailBackButton() {
   const back = document.createElement('button');
   const title = sessionDetailTitle();
-  const backLabel = state.openSession?.returnTo?.kind === 'session-group'
-    ? state.openSession.returnTo.summary?.name || t('sessions.backgroundReviews') : (t('sessions') || 'Sessions');
+  const backLabel = sessionDetailBackLabel();
+  // Every heading is built here, so the open request records what it shows.
+  if (state.openSession) state.openSession.headingSignature = JSON.stringify([title, backLabel]);
   back.type = 'button';
   back.className = title ? 'detail-back detail-back-titled' : 'detail-back';
   if (!title) back.textContent = `‹ ${backLabel}`;
@@ -4805,33 +4867,65 @@ function sessionGroupRunNode(row, max, parent) {
   wrap.className = 'detail-exchange session-group-run';
   const interactive = sessionRowsApi.sessionRowDetailAvailable(row);
   const botGroup = parent.summary?.sessionGroup === 'cursor-grok-bot';
+  // Subagent members are distinct conversations, so they read like Sessions
+  // rows (title, role/tool/model, activity, id) rather than as runs of one review stream.
+  const subagentGroup = parent.summary?.subagentGroup === true;
+  const namedGroup = botGroup || subagentGroup;
+  const mainSession = subagentGroup && row.key === parent.summary.groupRows?.[0]?.key;
   if (interactive) {
     wrap.setAttribute('role', 'button');
     wrap.setAttribute('tabindex', '0');
   }
   wrap.innerHTML = '<div class="detail-ex-head"><span class="detail-chev">›</span>'
     + '<div class="detail-ex-label"><span class="detail-ex-title"></span><span class="detail-ex-sub"></span>'
-    + (botGroup ? '<span class="session-group-id"></span>' : '') + '</div>'
+    + (subagentGroup ? '<span class="detail-ex-sub session-group-activity"></span>' : '')
+    + (namedGroup ? '<span class="session-group-id"></span>' : '') + '</div>'
     + '<div class="detail-ex-metrics"><span class="detail-ex-value"></span><span class="detail-ex-cost"></span></div></div>'
     + '<div class="bar"><div class="bar-fill"></div></div>';
   const time = sessionRowsApi.compactSessionTime(row.sortTime, new Date());
-  const title = (botGroup ? row.name : [row.modelLabel, time].filter(Boolean).join(' · '))
+  const title = (namedGroup ? row.name : [row.modelLabel, time].filter(Boolean).join(' · '))
     || parent.summary?.name || t('sessions.backgroundReviews');
   const titleEl = wrap.querySelector('.detail-ex-title');
   titleEl.textContent = title;
   titleEl.title = title;
   bindHoverMarquee(titleEl);
-  // A multi-model run reads "N models · time" here — the same label the
-  // Sessions list opens for its per-model shares, so the title opens it too.
-  if (row.modelTooltipEntries?.length > 1) {
-    limitWindowsView.setDetailTooltip(titleEl, row.modelTooltipEntries);
+  const modelEntries = row.modelTooltipEntries?.length > 1 ? row.modelTooltipEntries : null;
+  // Review headings and untitled sessions include the model label; named
+  // conversation titles do not describe the model breakdown.
+  if (modelEntries && (!namedGroup || !row.titled)) {
+    limitWindowsView.setDetailTooltip(titleEl, modelEntries);
   }
   if (!interactive) wrap.querySelector('.detail-chev').textContent = '';
   const sub = wrap.querySelector('.detail-ex-sub');
-  sub.textContent = botGroup ? [row.activity ? row.subtitle : '', row.activity || row.subtitle].filter(Boolean).join(' · ') : row.detail || '';
+  sub.textContent = subagentGroup
+    ? [t(mainSession ? 'sessions.mainSession' : 'sessions.subagent'), row.clientLabel || row.client, row.modelLabel].filter(Boolean).join(' · ')
+    : namedGroup ? [row.activity ? row.subtitle : '', row.activity || row.subtitle].filter(Boolean).join(' · ')
+      : row.detail || '';
   sub.title = sub.textContent;
+  let modelTrigger;
+  const modelOffset = subagentGroup ? sub.textContent.length - (row.modelLabel || '').length
+    : namedGroup && row.titled ? (row.subtitle || '').length - (row.modelLabel || '').length : -1;
+  if (modelEntries && row.modelLabel && modelOffset >= 0
+    && sub.textContent.slice(modelOffset, modelOffset + row.modelLabel.length) === row.modelLabel) {
+    modelTrigger = document.createElement('span');
+    modelTrigger.className = 'session-models';
+    modelTrigger.textContent = row.modelLabel;
+    sub.replaceChildren(
+      document.createTextNode(sub.textContent.slice(0, modelOffset)),
+      modelTrigger,
+      document.createTextNode(sub.textContent.slice(modelOffset + row.modelLabel.length))
+    );
+  }
   bindHoverMarquee(sub);
-  if (botGroup) {
+  if (modelTrigger) limitWindowsView.setDetailTooltip(modelTrigger, modelEntries);
+  if (subagentGroup) {
+    const activity = wrap.querySelector('.session-group-activity');
+    activity.textContent = row.activitySummary || '';
+    activity.title = activity.textContent;
+    activity.classList.toggle('hidden', !activity.textContent);
+    bindHoverMarquee(activity);
+  }
+  if (namedGroup) {
     const id = wrap.querySelector('.session-group-id');
     id.textContent = row.detail || '';
     id.title = row.detail || '';
@@ -4846,7 +4940,8 @@ function sessionGroupRunNode(row, max, parent) {
     sessionId: String(row.key || '').replace(/^session:[^:]+:/, ''),
     sessionCost: Number(row.cost || 0),
     title,
-    returnTo: parent
+    returnTo: parent,
+    titleFollowsSession: namedGroup
   });
   wrap.addEventListener('click', open);
   wrap.addEventListener('keydown', (event) => {
@@ -4893,7 +4988,7 @@ function renderSessionGroupDetail(request) {
   const overview = document.createElement('div');
   overview.className = 'session-group-overview';
   overview.innerHTML = '<span class="session-group-count"></span><span class="session-group-totals"></span>';
-  overview.querySelector('.session-group-count').textContent = request.summary.detail;
+  overview.querySelector('.session-group-count').textContent = request.summary.groupDetail || request.summary.detail;
   overview.querySelector('.session-group-totals').textContent = `${formatNumber(request.summary.value)} · ${formatCost(request.summary.cost || 0, request.summary.unpricedTokens)}`;
   container.append(overview);
 
