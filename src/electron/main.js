@@ -30,6 +30,8 @@ const { createClaudeWebFetch } = require('./providers/claude/webFetch');
 const { createMimoExchangeFetch } = require('./providers/mimo/exchangeFetch');
 const { runAntigravityOAuthLogin } = require('./providers/antigravity/oauthLogin');
 const antigravityOAuth = require('../shared/providers/antigravity/oauth');
+const workbuddyOAuth = require('../shared/providers/workbuddy/oauth');
+const { createWorkbuddyManagedAccounts } = require('./providers/workbuddy/managedAccounts');
 const {
   createWorkbuddyLocalAuth,
   isSupportedWorkbuddyLocalAppPlatform
@@ -680,6 +682,7 @@ function defaultSettings() {
     // Third-party global reset predictions are opt-in and remain separate from
     // the account-specific limits wire shape.
     codexResetForecastEnabled: false,
+    workbuddyQuotaTotalEnabled: false,
     showCodexAdditionalLimits: true,
     showLimitUsed: parseBoolean(process.env.TOKEN_MONITOR_SHOW_LIMIT_USED, false),
     // Manual subscription metadata. Plain preferences, not credentials, so they
@@ -826,6 +829,8 @@ function electronLimitsConfig() {
     workbuddyDesktopSessionSupported,
     workbuddyDesktopSessionEnabled,
     workbuddyLocalSession: workbuddyDesktopSessionEnabled ? electronWorkbuddyLocalAuth.getSessionInfo() : {},
+    workbuddyLocalSessions: workbuddyDesktopSessionEnabled ? electronWorkbuddyLocalAuth.getSessionInfos() : [],
+    workbuddyManagedAccounts: workbuddyAccountsForRenderer(),
     defaultLimitProviders: defaultLimitProviders(),
     codexManagedAccounts: codexManagedAccountsForCollector(),
     antigravityManagedAccounts: antigravityManagedAccountsForCollector(),
@@ -926,6 +931,7 @@ function electronLimitsDeps() {
     onClaudeWebCookieRenewed: persistClaudeWebCookieRenewal,
     onStepfunTokenRenewed: persistStepfunTokenRenewal,
     onAntigravityCredentialsRenewed: persistAntigravityCredentialsRenewal,
+    resolveWorkbuddyManagedCredential: (account, options) => workbuddyAccountService().resolveCredential(account, options),
     onThirdPartyCredentialsRenewed: persistThirdPartyCredentialsRenewal,
     onThirdPartyAccountKeyResolved: persistThirdPartyAccountKey
   };
@@ -1121,6 +1127,50 @@ function codexManagedAccountsForCollector() {
 
 function normalizeAntigravityManagedAccounts(value) {
   return antigravityOAuth.normalizeManagedAccounts(value);
+}
+
+let workbuddyManagedAccountService = null;
+
+function workbuddyAccountsForRenderer() {
+  return workbuddyOAuth.normalizeManagedAccounts(settings?.workbuddyManagedAccounts);
+}
+
+function workbuddyAccountService() {
+  if (!workbuddyManagedAccountService) {
+    workbuddyManagedAccountService = createWorkbuddyManagedAccounts({
+      getAccounts: () => settings?.workbuddyManagedAccounts,
+      setAccounts: (accounts) => { settings.workbuddyManagedAccounts = accounts; },
+      saveSettings: () => saveSettings({ throwOnError: true }),
+      credentialStore: ensureCredentialStore(),
+      fetch: electronLimitsFetch(),
+      openExternal: (url) => shell.openExternal(url),
+      onChanged: (account, reason, options = {}) => {
+        pushSettingsToRenderer();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          try { mainWindow.webContents.send('workbuddy:accounts', workbuddyAccountsForRenderer()); } catch (_) {}
+        }
+        const scope = { provider: 'workbuddy', accountId: account.id, accountKey: account.accountKey };
+        // Removal can uncover an independent app-owned session for this identity.
+        // Clear only the removed row, then rebuild the complete discovery union.
+        void queueLimitInvalidation(scope, reason === 'account-enabled' ? 'account-state' : reason, options)
+          .then(() => reason === 'account-removed'
+            ? queueLimitInvalidation({ provider: 'workbuddy' }, 'account-state', { refresh: true })
+            : undefined)
+          .catch(() => {});
+      }
+    });
+  }
+  return workbuddyManagedAccountService;
+}
+
+async function workbuddyAccountOperation(operation) {
+  try {
+    return await operation(workbuddyAccountService());
+  } catch (_) {
+    // Storage/transport errors may contain paths or credential material. IPC
+    // returns the bounded setup error and never forwards their raw message.
+    return { ok: false, errorCode: 'credentialStorageUnavailable' };
+  }
 }
 
 function antigravityAccountsForRenderer() {
@@ -2556,6 +2606,7 @@ function readSettings() {
     merged.homeLimitDisplayMode = normalizeHomeLimitDisplayMode(merged.homeLimitDisplayMode);
     merged.showHomeLimitProviderNames = parseBoolean(merged.showHomeLimitProviderNames, false);
     merged.codexResetForecastEnabled = parseBoolean(merged.codexResetForecastEnabled, false);
+    merged.workbuddyQuotaTotalEnabled = parseBoolean(merged.workbuddyQuotaTotalEnabled, false);
     merged.showCodexAdditionalLimits = parseBoolean(merged.showCodexAdditionalLimits, true);
     merged.opencodeLocalLimitsEnabled = parseBoolean(merged.opencodeLocalLimitsEnabled, false);
     delete merged.workbuddyLocalAppEnabled;
@@ -2616,6 +2667,7 @@ function readSettings() {
     }
     merged.codexManagedAccounts = normalizeCodexManagedAccounts(merged.codexManagedAccounts);
     merged.antigravityManagedAccounts = normalizeAntigravityManagedAccounts(merged.antigravityManagedAccounts);
+    merged.workbuddyManagedAccounts = workbuddyOAuth.normalizeManagedAccounts(merged.workbuddyManagedAccounts);
     merged.mimoManagedAccounts = normalizeMimoManagedAccounts(merged.mimoManagedAccounts);
     if (saved.keepAboveTaskbar !== undefined) {
       merged.keepAboveTaskbar = parseBoolean(saved.keepAboveTaskbar, false);
@@ -5328,6 +5380,7 @@ function settingsForRenderer() {
     ...accountFieldProjection(settings, process.env),
     codexManagedAccounts: codexAccountsForRenderer(),
     antigravityManagedAccounts: antigravityAccountsForRenderer(),
+    workbuddyManagedAccounts: workbuddyAccountsForRenderer(),
     mimoManagedAccounts: mimoAccountsForRenderer(),
     ...accountStatusProjection(settings, process.env),
     limitAccountForms: limitAccountFormsForRenderer(),
@@ -5450,6 +5503,7 @@ function edgeDockAppearance(rendererSettings = settingsForRenderer()) {
     limitProviderHiddenItems: source.limitProviderHiddenItems,
     showLimitSource: source.showLimitSource,
     codexResetForecastEnabled: source.codexResetForecastEnabled,
+    workbuddyQuotaTotalEnabled: source.workbuddyQuotaTotalEnabled,
     claudePrepaidBalanceEnabled: source.claudePrepaidBalanceEnabled,
     // The dock's session rows carry the same context gauge as the Sessions
     // list, so its Remaining/Used preference has to reach this renderer too.
@@ -7707,6 +7761,7 @@ app.whenReady().then(() => {
       maskLimitAccountEmails: parseBoolean(patch.maskLimitAccountEmails ?? settings.maskLimitAccountEmails, false),
       claudePrepaidBalanceEnabled: parseBoolean(patch.claudePrepaidBalanceEnabled ?? settings.claudePrepaidBalanceEnabled, true),
       codexResetForecastEnabled: parseBoolean(patch.codexResetForecastEnabled ?? settings.codexResetForecastEnabled, false),
+      workbuddyQuotaTotalEnabled: parseBoolean(patch.workbuddyQuotaTotalEnabled ?? settings.workbuddyQuotaTotalEnabled, false),
       showCodexAdditionalLimits: parseBoolean(patch.showCodexAdditionalLimits ?? settings.showCodexAdditionalLimits, true),
       opencodeAmbientEnabled: parseBoolean(patch.opencodeAmbientEnabled ?? settings.opencodeAmbientEnabled, true),
       opencodeLocalLimitsEnabled: parseBoolean(patch.opencodeLocalLimitsEnabled ?? settings.opencodeLocalLimitsEnabled, false),
@@ -8168,6 +8223,11 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('app:openUserData', () => shell.openPath(app.getPath('userData')));
   ipcMain.handle('antigravity:accounts', () => antigravityAccountsForRenderer());
+  ipcMain.handle('workbuddy:accounts', () => workbuddyAccountsForRenderer());
+  ipcMain.handle('workbuddy:addAccount', (_event, realm) => workbuddyAccountOperation((service) => service.addAccount(realm)));
+  ipcMain.handle('workbuddy:cancelLogin', () => workbuddyManagedAccountService?.cancelLogin() || false);
+  ipcMain.handle('workbuddy:removeAccount', (_event, id) => workbuddyAccountOperation((service) => service.removeAccount(id)));
+  ipcMain.handle('workbuddy:setAccountEnabled', (_event, id, enabled) => workbuddyAccountOperation((service) => service.setAccountEnabled(id, enabled)));
   ipcMain.handle('antigravity:addAccount', () => addAntigravityManagedAccount());
   ipcMain.handle('antigravity:cancelLogin', () => cancelAntigravityManagedAccountLogin());
   ipcMain.handle('antigravity:setAccountEnabled', (_event, id, enabled) => setAntigravityManagedAccountEnabled(id, enabled));
@@ -9146,6 +9206,7 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 app.on('before-quit', () => {
   quitRequested = true;
   antigravityOAuthLoginController?.abort();
+  workbuddyManagedAccountService?.cancelLogin();
   resetMacWidgetReloadThrottle();
   if (rateRefreshTimer) clearInterval(rateRefreshTimer);
   if (appUpdateBackgroundTimer) clearInterval(appUpdateBackgroundTimer);
