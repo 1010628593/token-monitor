@@ -64,6 +64,8 @@ Failed usage reconfiguration restores the last-known-good runtime and retries th
 `src/shared/usage/usageHost.js` moves collection, transforms and session-archive writes off Electron's main thread. Its summaries are already transformed (`{ transformed: true }`); `DeviceRuntime` must not transform or archive them again.
 
 - Replacement and archive clearing wait for worker exit, preventing overlapping collectors, descriptor sets and archive writers.
+- After a transformed worker delivery, Electron releases its cold-anchor archive and SQLite connection without deleting persisted rows. In-process fallback must fully reload the archive and revision before capturing.
+- Archive read/write failures reject usage updates and previews, preserving `DeviceState`'s last complete usage until a successful tick. External-agent reads follow the same rule; genuinely empty archives remain valid. Failed cold-anchor reads skip publication.
 - `sessionUsageArchiveStore.js` streams archive rows and captures the revision before scanning. Publish loads/revision changes only after cursor completion, and close failed cursors so retries cannot publish partial archives or skip concurrent writes.
 - `USAGE_TRANSFORM_SETTING_KEYS` is the worker's settings contract. Send saved patches before the reconfigure delay and resolve `settings:update` only after acknowledgement, so a completed archive pause guarantees no further capture.
 - Worker failure reports `usage-worker-failed` and pins subsequent runtimes to the in-process fallback; `TOKEN_MONITOR_USAGE_WORKER=0` selects it explicitly.
