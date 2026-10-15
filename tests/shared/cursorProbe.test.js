@@ -3,8 +3,16 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
+const { fetchCursorLimits } = require('../../src/shared/providers/cursor/limits');
 
-const { parseGrokBotUsage, parseUsageSummary, parseUserInfo, probe } = require('../../src/shared/providers/cursor/probe');
+const {
+  parseGrokBotUsage,
+  parsePlanInfo,
+  parsePrepaidBilling,
+  parseUsageSummary,
+  parseUserInfo,
+  probe
+} = require('../../src/shared/providers/cursor/probe');
 
 test('parseUsageSummary maps cents to USD and reads billing cycle end', () => {
   const input = {
@@ -37,6 +45,24 @@ test('parseUsageSummary falls back to (used / limit) when totalPercentUsed missi
   assert.equal(result.planPercent, 25);
 });
 
+test('parseUsageSummary keeps missing total usage unknown instead of synthesizing zero', () => {
+  for (const input of [
+    {},
+    { individualUsage: { plan: {} } },
+    { individualUsage: { plan: { autoPercentUsed: 10, apiPercentUsed: 50 } } },
+    { individualUsage: { plan: { limit: 2000 } } },
+    { individualUsage: { plan: { used: null, limit: 2000 } } },
+    { individualUsage: { plan: { used: 500 } } },
+    { individualUsage: { overall: { limit: 2000 } } },
+    { teamUsage: { pooled: { limit: 2000 } } }
+  ]) {
+    assert.equal(parseUsageSummary(input).planPercent, null, JSON.stringify(input));
+  }
+  for (const plan of [{ totalPercentUsed: 0 }, { used: 0, limit: 2000 }]) {
+    assert.equal(parseUsageSummary({ individualUsage: { plan } }).planPercent, 0);
+  }
+});
+
 test('parseUsageSummary never synthesizes a total from the separate model pools', () => {
   const input = {
     billingCycleEnd: '2026-06-01T00:00:00Z',
@@ -44,6 +70,25 @@ test('parseUsageSummary never synthesizes a total from the separate model pools'
   };
   const result = parseUsageSummary(input);
   assert.equal(result.planPercent, 25);
+});
+
+test('parseUsageSummary limits unified percentages to individual plan data', () => {
+  for (const individual of [{}, { overall: { used: 1000, limit: 2000 } }]) {
+    for (const [plan, expected] of [
+      [{}, null],
+      [{ autoPercentUsed: 10, apiPercentUsed: 50 }, null],
+      [{ totalPercentUsed: 0 }, 0],
+      [{ used: 0, limit: 2000 }, 0],
+      [{ used: 500, limit: 2000 }, 25]
+    ]) {
+      const summary = {
+        individualUsage: { ...individual, plan },
+        teamUsage: { pooled: { used: 7500, limit: 10000 } }
+      };
+      assert.equal(parseUsageSummary(summary, { unifiedPlan: true }).planPercent, expected);
+      assert.equal(parseUsageSummary(summary).planPercent, expected ?? (individual.overall ? 50 : 75));
+    }
+  }
 });
 
 test('parseGrokBotUsage keeps an exhausted included allowance visible', () => {
@@ -60,7 +105,8 @@ test('parseGrokBotUsage keeps an exhausted included allowance visible', () => {
     resetsAt: '2026-06-01T00:00:00.000Z',
     windowMinutes: 7 * 24 * 60,
     hasAvailableUsage: false,
-    hasNonZeroIncludedLimit: true
+    hasNonZeroIncludedLimit: true,
+    isUnified: false
   });
 });
 
@@ -109,7 +155,7 @@ test('parseUsageSummary falls back to enterprise pooled usage when individual da
 
 test('parseUsageSummary tolerates missing fields', () => {
   const result = parseUsageSummary({});
-  assert.equal(result.planPercent, 0);
+  assert.equal(result.planPercent, null);
   assert.equal(result.planUsedUsd, 0);
   assert.equal(result.billingCycleEnd, null);
   assert.equal(result.membershipType, null);
@@ -187,7 +233,7 @@ test('probe includes legacy request usage when auth returns a user id', async ()
   assert.equal(result.usage.grokBot.hasAvailableUsage, false);
   assert.deepEqual(
     calls.map((call) => call.path).sort(),
-    ['/api/auth/me', '/api/dashboard/get-sand-usage-status', '/api/usage-summary', '/api/usage?user=user_1'].sort()
+    ['/api/auth/me', '/api/dashboard/get-plan-info', '/api/dashboard/get-sand-usage-status', '/api/usage-summary', '/api/usage?user=user_1'].sort()
   );
   assert.deepEqual(new Set(calls.map((call) => call.headers.Referer)), new Set(['https://cursor.com/dashboard']));
   const sand = calls.find((call) => call.path === '/api/dashboard/get-sand-usage-status');
@@ -245,6 +291,226 @@ test('probe destroys in-flight HTTPS requests when the parent signal aborts', as
   const result = await pending;
   assert.equal(result.ok, false);
   assert.equal(result.error.kind, 'network');
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 4);
   assert.ok(requests.every((request) => request.destroyed));
+});
+
+// Shapes below follow the proto3 JSON the dashboard returned to a live legacy
+// account: int64 as strings, full enum names, zero values omitted.
+test('parsePlanInfo reads a unified weekly plan from proto3 JSON', () => {
+  assert.deepEqual(parsePlanInfo({
+    isMerged: true,
+    planInfo: {
+      planName: 'Premium',
+      includedAmountCents: 6000,
+      billingCycleEnd: '1793179761487',
+      includedUsagePeriod: 'INCLUDED_USAGE_PERIOD_WEEKLY',
+      includedUsageResetsAt: '1792800000000'
+    }
+  }), {
+    isMerged: true,
+    planName: 'Premium',
+    includedUsagePeriod: 'weekly',
+    includedUsageResetsAt: new Date(1792800000000).toISOString(),
+    billingCycleEnd: new Date(1793179761487).toISOString()
+  });
+});
+
+test('parsePlanInfo treats omitted proto3 fields as a legacy plan', () => {
+  assert.deepEqual(parsePlanInfo({ planInfo: { planName: 'Free', price: 'Free', billingCycleEnd: '1793179761487' } }), {
+    isMerged: false,
+    planName: 'Free',
+    includedUsagePeriod: null,
+    includedUsageResetsAt: null,
+    billingCycleEnd: new Date(1793179761487).toISOString()
+  });
+  assert.equal(parsePlanInfo(null).isMerged, false);
+});
+
+test('parsePlanInfo keeps out-of-range dates unknown without losing valid fields', () => {
+  for (const invalid of [8640000000000001, '8640000000000001', Number.MAX_SAFE_INTEGER, String(Number.MAX_SAFE_INTEGER)]) {
+    for (const field of ['includedUsageResetsAt', 'billingCycleEnd']) {
+      const info = parsePlanInfo({ isMerged: true, planInfo: {
+        planName: 'Premium',
+        includedUsagePeriod: 'INCLUDED_USAGE_PERIOD_WEEKLY',
+        includedUsageResetsAt: '1792800000000',
+        billingCycleEnd: '1793179761487',
+        [field]: invalid
+      } });
+      assert.equal(info[field], null);
+      assert.equal(info.isMerged, true);
+      assert.equal(info.planName, 'Premium');
+      const other = field === 'billingCycleEnd' ? 'includedUsageResetsAt' : 'billingCycleEnd';
+      assert.notEqual(info[other], null);
+    }
+  }
+  for (const boundary of [8640000000000000, '8640000000000000']) {
+    assert.equal(parsePlanInfo({ planInfo: { includedUsageResetsAt: boundary } }).includedUsageResetsAt,
+      '+275760-09-13T00:00:00.000Z');
+  }
+});
+
+test('parsePrepaidBilling reads int64 cents and an omitted balance as zero', () => {
+  assert.deepEqual(parsePrepaidBilling({ billingMode: 'PREPAID_BILLING_MODE_PREPAID', availableCents: '1446' }), { availableUsd: 14.46 });
+  assert.deepEqual(parsePrepaidBilling({}), { availableUsd: 0 });
+  assert.deepEqual(parsePrepaidBilling({ availableCents: 'abc' }), { availableUsd: null });
+});
+
+function dashboardFakeHttps(payloads, calls = []) {
+  return {
+    request(opts, cb) {
+      calls.push(opts.path);
+      const res = new EventEmitter();
+      // A null payload stands for an unavailable endpoint.
+      res.statusCode = payloads[opts.path] === null ? 500 : 200;
+      setImmediate(() => {
+        cb(res);
+        if (res.statusCode === 200) setImmediate(() => {
+          res.emit('data', Buffer.from(JSON.stringify(payloads[opts.path] || {})));
+          res.emit('end');
+        });
+      });
+      return { on() {}, end() {}, write() {}, setTimeout() {} };
+    }
+  };
+}
+
+test('unified limits through the real probe distinguish missing usage from a true zero', async () => {
+  for (const [summary, expected] of [
+    [{}, null],
+    [{ individualUsage: { plan: {} } }, null],
+    [{ individualUsage: { plan: { autoPercentUsed: 10, apiPercentUsed: 50 } } }, null],
+    [{ individualUsage: { plan: { limit: 2000 } } }, null],
+    [{ individualUsage: { plan: { totalPercentUsed: 0 } } }, 0],
+    [{ individualUsage: { plan: { used: 0, limit: 2000 } } }, 0],
+    [{ individualUsage: { plan: { used: 500, limit: 2000 } } }, 25]
+  ]) {
+    for (const planInfo of [{ isMerged: true }, null]) {
+      const result = await fetchCursorLimits({}, {
+        readActiveAccount: () => ({ id: 'acct-1', sessionToken: 't' }),
+        httpsLib: dashboardFakeHttps({
+          '/api/usage-summary': summary,
+          '/api/dashboard/get-plan-info': planInfo,
+          '/api/dashboard/get-sand-usage-status': { isUnified: true },
+          '/api/dashboard/get-user-prepaid-billing': { availableCents: '1446' }
+        })
+      });
+      const included = result.windows.find((window) => window.label === 'Included usage');
+      assert.equal(result.status, 'ok');
+      if (expected === null) assert.equal(included, undefined, JSON.stringify(summary));
+      else assert.equal(included?.usedPercent, expected);
+      assert.equal(result.windows.find((window) => window.label === 'Prepaid balance')?.remaining, 14.46);
+      assert.ok(!result.windows.some((window) => ['Cursor Models', 'Other Models'].includes(window.label)));
+    }
+  }
+});
+
+test('unified limits never reuse legacy overall or team usage as the included pool', async () => {
+  for (const planInfo of [
+    { isMerged: true, planInfo: { includedUsagePeriod: 'INCLUDED_USAGE_PERIOD_WEEKLY' } },
+    { isMerged: true, planInfo: { includedUsagePeriod: 'INCLUDED_USAGE_PERIOD_MONTHLY' } },
+    null,
+    { isMerged: false }
+  ]) {
+    const unified = planInfo?.isMerged !== false;
+    for (const overall of [undefined, { used: 1000, limit: 2000 }]) {
+      for (const [plan, expected] of [[{}, null], [{ totalPercentUsed: 0 }, 0], [{ used: 500, limit: 2000 }, 25]]) {
+        const result = await fetchCursorLimits({}, {
+          readActiveAccount: () => ({ id: 'acct-1', sessionToken: 't' }),
+          httpsLib: dashboardFakeHttps({
+            '/api/usage-summary': {
+              individualUsage: { plan, overall },
+              teamUsage: { pooled: { used: 7500, limit: 10000 } },
+              billingCycleEnd: '2026-11-01T00:00:00Z'
+            },
+            '/api/dashboard/get-plan-info': planInfo,
+            '/api/dashboard/get-sand-usage-status': { isUnified: true },
+            '/api/dashboard/get-user-prepaid-billing': { availableCents: '1446' }
+          })
+        });
+        assert.equal(result.status, 'ok');
+        const included = result.windows.find((window) => window.label === 'Included usage');
+        if (!unified || expected === null) assert.equal(included, undefined);
+        else assert.equal(included?.usedPercent, expected);
+        const team = result.windows.find((window) => window.label === 'Team pool');
+        assert.equal(team?.usedPercent, 75);
+        assert.equal(team?.kind, 'billing');
+        assert.equal(team?.used, 75);
+        assert.equal(team?.limit, 100);
+        const prepaid = result.windows.find((window) => window.label === 'Prepaid balance');
+        if (unified) assert.equal(prepaid?.remaining, 14.46);
+        else assert.equal(prepaid, undefined);
+        if (!unified && overall) {
+          assert.equal(result.windows.find((window) => window.label === 'Overall')?.usedPercent, expected ?? 50);
+        }
+      }
+    }
+  }
+});
+
+test('probe keeps a unified account available when plan timestamps exceed the Date range', async () => {
+  const result = await probe('tok', { httpsLib: dashboardFakeHttps({
+    '/api/usage-summary': { individualUsage: { plan: { totalPercentUsed: 30 } } },
+    '/api/dashboard/get-plan-info': {
+      isMerged: true,
+      planInfo: {
+        includedUsagePeriod: 'INCLUDED_USAGE_PERIOD_WEEKLY',
+        includedUsageResetsAt: '8640000000000001',
+        billingCycleEnd: '8640000000000001'
+      }
+    },
+    '/api/dashboard/get-user-prepaid-billing': { availableCents: '1446' }
+  }) });
+  assert.equal(result.ok, true);
+  assert.equal(result.usage.planPercent, 30);
+  assert.equal(result.usage.planInfo.isMerged, true);
+  assert.equal(result.usage.planInfo.includedUsageResetsAt, null);
+  assert.equal(result.usage.planInfo.billingCycleEnd, null);
+  assert.equal(result.usage.prepaid.availableUsd, 14.46);
+});
+
+test('probe fetches the prepaid balance only for unified plans', async () => {
+  const legacyCalls = [];
+  const legacy = await probe('tok', { httpsLib: dashboardFakeHttps({
+    '/api/usage-summary': { individualUsage: { plan: { autoPercentUsed: 1, apiPercentUsed: 2 } } },
+    '/api/dashboard/get-plan-info': { planInfo: { planName: 'Pro' } }
+  }, legacyCalls) });
+  assert.equal(legacy.usage.planInfo.isMerged, false);
+  assert.equal(legacy.usage.prepaid, null);
+  assert.ok(!legacyCalls.includes('/api/dashboard/get-user-prepaid-billing'));
+
+  const unified = await probe('tok', { httpsLib: dashboardFakeHttps({
+    '/api/usage-summary': { individualUsage: { plan: { totalPercentUsed: 30 } } },
+    '/api/dashboard/get-plan-info': {
+      isMerged: true,
+      planInfo: { planName: 'Plus', includedUsagePeriod: 'INCLUDED_USAGE_PERIOD_WEEKLY', includedUsageResetsAt: '1792800000000' }
+    },
+    '/api/dashboard/get-user-prepaid-billing': { availableCents: '2500' }
+  }) });
+  assert.equal(unified.usage.planPercent, 30);
+  assert.equal(unified.usage.planInfo.includedUsagePeriod, 'weekly');
+  assert.deepEqual(unified.usage.prepaid, { availableUsd: 25 });
+});
+
+test('probe treats the sand unified flag as a unified plan when plan info is unavailable', async () => {
+  const calls = [];
+  const result = await probe('tok', { httpsLib: dashboardFakeHttps({
+    '/api/usage-summary': { individualUsage: { plan: { totalPercentUsed: 5 } } },
+    '/api/dashboard/get-sand-usage-status': { usagePercent: 5, isUnified: true },
+    '/api/dashboard/get-plan-info': null
+  }, calls) });
+  assert.equal(result.usage.grokBot.isUnified, true);
+  assert.ok(calls.includes('/api/dashboard/get-user-prepaid-billing'));
+  assert.deepEqual(result.usage.prepaid, { availableUsd: 0 });
+});
+
+test('probe skips the prepaid request when plan info denies a sand unified flag', async () => {
+  const calls = [];
+  const result = await probe('tok', { httpsLib: dashboardFakeHttps({
+    '/api/usage-summary': { individualUsage: { plan: { autoPercentUsed: 1, apiPercentUsed: 2 } } },
+    '/api/dashboard/get-sand-usage-status': { usagePercent: 5, isUnified: true },
+    '/api/dashboard/get-plan-info': { planInfo: { planName: 'Pro' } }
+  }, calls) });
+  assert.equal(result.usage.prepaid, null);
+  assert.ok(!calls.includes('/api/dashboard/get-user-prepaid-billing'));
 });
