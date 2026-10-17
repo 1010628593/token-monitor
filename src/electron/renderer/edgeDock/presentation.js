@@ -712,7 +712,8 @@
   }
 
   // Two answers, because the rail and the subscription matcher want different
-  // ones. `byId` is what the cell draws, so it is gated on `hasReportableData`.
+  // ones. `byId` is what the cell draws, gated on `hasReportableData` for the
+  // ordinary rail; the top detail opts into aggregate failures.
   // `allById` is every account the provider has, gate ignored, because a
   // subscription binds to the account rather than to the row.
   //
@@ -745,7 +746,9 @@
     }
     for (const provider of providers) {
       const id = normalizedId(provider?.provider);
-      if (!id || !hasReportableData(provider)) continue;
+      // The top entry's detail keeps unavailable accounts in the aggregate,
+      // with the shared view's status/recovery UI. The ordinary rail stays gated.
+      if (!id || (!options.includeUnavailableAccounts && !hasReportableData(provider))) continue;
       if (!byId.has(id)) byId.set(id, []);
       byId.get(id).push(provider);
     }

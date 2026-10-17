@@ -209,3 +209,14 @@ test('role changes hide only the retained background glass and preserve its shap
   assert.equal(native.calls().filter((call) => call.selector === 'alloc').length, 1);
   assert.equal(native.calls().filter((call) => call.selector === '_setPath:').length, 1);
 });
+
+for (const arch of ['arm64', 'x64']) {
+  test(`${arch}: failed detach still releases the owned view exactly once`, () => {
+    const native = bridge(arch, { failAt: 'removeFromSuperview' });
+    const glass = native.create();
+    assert.throws(() => glass.dispose(), /injected native failure/);
+    assert.deepEqual(native.calls().filter(call => call.selector === 'release').map(call => call.target), [40]);
+    const disposed = native.calls();
+    glass.dispose(); assert.deepEqual(native.calls(), disposed);
+  });
+}

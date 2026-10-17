@@ -115,8 +115,8 @@ function createMacLiquidGlass(win, { shaped = false } = {}) {
     // We own only the background view, never Electron's root view. After close
     // its native parent is already torn down; just release our retained object.
     if (glass) {
-      if (!windowClosed && !win.isDestroyed()) api.call(glass, 'removeFromSuperview');
-      api.call(glass, 'release');
+      try { if (!windowClosed && !win.isDestroyed()) api.call(glass, 'removeFromSuperview'); }
+      finally { api.call(glass, 'release'); }
     }
   }
 

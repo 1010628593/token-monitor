@@ -78,7 +78,20 @@ class FakeElement {
   setAttribute(name, value) { this.attributes[name] = value; }
   removeAttribute(name) { delete this.attributes[name]; }
   replaceChildren(...children) { this.children = [...children]; }
-  querySelector(selector) { return this.find(selector.replace('.', '')); }
+  querySelector(selector) {
+    if (selector === '.limit-window-text > span') return this.find('limit-window-text')?.children[0] || null;
+    return this.querySelectorAll(selector)[0] || null;
+  }
+  querySelectorAll(selector) {
+    const names = selector.split(',').map((part) => part.trim().replace('.', ''));
+    return [...this.walk()].slice(1).filter((node) => names.some((name) => node.classNames.has(name)));
+  }
+  replaceWith(node) {
+    const index = this.parent.children.indexOf(this);
+    this.parent.children.splice(index, 1, node);
+    node.parent = this.parent;
+    this.parent = null;
+  }
 
   // Depth-first walk, so an assertion can ask what the card actually drew
   // without knowing which provider branch nested it where.
@@ -1507,7 +1520,7 @@ test('a subscription bound to a hidden account does not decorate the row that is
   );
 
   const dock = fs.readFileSync(path.join(root, 'src/electron/renderer/edgeDock/dock.js'), 'utf8');
-  assert.match(dock, /subscriptionAccounts: \(\) => state\.payload\?\.cell\?\.subscriptionAccounts \|\| \[\],/);
+  assert.match(dock, /subscriptionAccounts: \(\) => cell\(\)\?\.subscriptionAccounts \|\| \[\],/);
 });
 
 // Hiding is not the only display rule that narrows the universe. The rail lists
@@ -1723,7 +1736,7 @@ test('the dock hands the shared view the device context a cell carries', () => {
   const wiring = balancedCall(dock, 'createLimitWindowsView({');
   assert.match(
     wiring,
-    /provenanceContext: \(\) => state\.payload\?\.cell\?\.provenanceContext/,
+    /provenanceContext: \(\) => cell\(\)\?\.provenanceContext/,
     'the dock card must read the context off the cell it renders'
   );
 });
@@ -1977,4 +1990,500 @@ test('WorkBuddy groups count accounts and retain failures without repeating the 
   const rows = group.find('limit-account-list').children;
   assert.deepEqual(rows.map((row) => row.find('limit-name-title').textContent), ['Personal', 'Work']);
   assert.equal(rows[1].find('limit-plan').textContent, 'Unavailable');
+});
+
+
+function notchAdapter() {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const start = source.indexOf('function notchQuotaColor(');
+  const end = source.indexOf('function fitNotchTooltip(', start);
+  assert.ok(start >= 0 && end > start, 'notch adapter source boundaries should exist');
+  const context = {
+    el: (_tag, classes, text = '') => { const node = new FakeElement(_tag); node.className = classes; node.textContent = text; return node; },
+    limitResetMotionApi,
+    limitPresentationApi,
+    limitProviderColor: () => '#888888',
+    readableColor: (color) => color,
+    providerLabel: (id) => id,
+    t: (key) => key
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  return context;
+}
+
+test('notch Codex overview follows the shared current-account headline and preserves other account quotas in detail', () => {
+  const records = [
+    { provider: 'codex', accountKey: 'first', accountEmail: 'first@example.test', status: 'ok', windows: [{ kind: 'session', remainingPercent: 5 }, { kind: 'weekly', remainingPercent: 10 }] },
+    { provider: 'codex', accountKey: 'current', accountEmail: 'current@example.test', status: 'ok', windows: [{ kind: 'session', remainingPercent: 80 }, { kind: 'weekly', remainingPercent: 90 }] }
+  ];
+  const options = {
+    items: [{ type: 'limit', provider: 'codex' }],
+    codexManagedAccounts: [{ id: 'current-managed', accountKey: 'current' }],
+    activeCodexAccountId: 'current-managed'
+  };
+  const adapter = notchAdapter();
+  const view = dockView();
+  const cell = buildEdgeDockCells({ limits: { providers: records } }, options)[0];
+  const overview = adapter.notchOverviewCard(cell, view);
+  assert.equal(overview.querySelectorAll('.home-limit-account').length, 1);
+  assert.match(overview.text, /current@example.test/);
+  assert.doesNotMatch(overview.text, /first@example.test/);
+  assert.equal(cardRows(overview).length, 2);
+  const detail = view.renderLimitProviderGroup('codex', 'Codex', records, '#888888');
+  adapter.omitNotchQuotaRows(detail, cell);
+  const rows = detail.querySelectorAll('.limit-account-row');
+  assert.equal(adapter.notchQuotaRows(rows[0]).length, 2, 'other account keeps both meters');
+  assert.equal(adapter.notchQuotaRows(rows[1]).length, 0, 'only displayed account is deduplicated');
+  assert.match(detail.text, /first@example.test/);
+  assert.match(detail.text, /current@example.test/);
+  const lowest = buildEdgeDockCells({ limits: { providers: records } }, {
+    ...options, items: [{ type: 'limit', provider: 'codex', accountMode: 'lowest' }]
+  })[0];
+  assert.match(adapter.notchOverviewCard(lowest, view).text, /first@example.test/);
+});
+
+test('notch Codex overview finds a current headline outside the original detail account cap', () => {
+  const records = Array.from({ length: 51 }, (_, index) => ({
+    provider: 'codex', accountKey: `account-${index}`, accountEmail: `account-${index}@example.test`,
+    status: 'ok', windows: [{ kind: 'session', remainingPercent: 80 }]
+  }));
+  const cell = buildEdgeDockCells({ limits: { providers: records } }, {
+    items: [{ type: 'limit', provider: 'codex' }],
+    codexManagedAccounts: [{ id: 'managed-50', accountKey: 'account-50' }],
+    activeCodexAccountId: 'managed-50'
+  })[0];
+  assert.equal(cell.accounts.length, 50);
+  const overview = notchAdapter().notchOverviewCard(cell, dockView());
+  assert.equal(overview.querySelectorAll('.home-limit-account').length, 1);
+  assert.match(overview.text, /account-50@example.test/);
+});
+
+test('notch overview keeps every quota item including non-meter balances and unlimited plans', () => {
+  const adapter = notchAdapter();
+  const { LIMIT_PROVIDER_IDS } = require('../../src/shared/limits/providers');
+  for (const provider of LIMIT_PROVIDER_IDS) {
+    for (const record of shapeRecords(provider)) {
+      const view = dockView();
+      const full = view.renderProviderWindows(record, '#888888');
+      const expected = cardRows(full).filter((row) => !row.classNames.has('limit-window-note')
+        || row.find('limit-meter') || (row.dataset.usageItem && !['resets', 'spend'].includes(row.dataset.usageItem)));
+      const overview = adapter.notchOverviewCard({ provider, accounts: [{ record }] }, view);
+      assert.deepEqual(cardRows(overview).map((row) => row.dataset.usageItem), expected.map((row) => row.dataset.usageItem), provider);
+      const detail = adapter.omitNotchQuotaRows(full);
+      assert.equal(adapter.notchQuotaRows(detail).length, 0, `${provider}: detail must not repeat quotas`);
+      const keyedDetail = new FakeElement('section');
+      keyedDetail.append(view.renderLimitProviderSolo(provider, provider, record, '#888888'));
+      adapter.omitNotchQuotaRows(keyedDetail, { provider, accounts: [{ record }] });
+      assert.equal(adapter.notchQuotaRows(keyedDetail).length, 0, `${provider}: keyed detail must not repeat quotas`);
+    }
+  }
+});
+
+test('notch moves credit detail info to the right without dropping its quota or changing ordinary dock cards', () => {
+  const adapter = notchAdapter();
+  const record = { provider: 'cline', status: 'ok', windows: [
+    { kind: 'billing', metric: 'credits', label: 'Credits', remaining: 0.5, currency: 'CREDITS', showMeter: false },
+    { kind: 'billing', metric: 'spend', label: 'Usage credits', used: 0.13, currency: 'USD', showMeter: false }
+  ] };
+  const view = dockView();
+  const original = view.renderProviderWindows(record, '#888888');
+  const overview = adapter.notchOverviewCard({ provider: 'cline', accounts: [{ record }] }, view);
+  assert.match(overview.text, /0\.50/);
+  assert.equal(overview.querySelectorAll('.limit-detail-tooltip-wrap').length, 0);
+  const detail = adapter.omitNotchQuotaRows(view.renderProviderWindows(record, '#888888'));
+  assert.doesNotMatch(detail.text, /0\.50/);
+  assert.match(detail.text, /Month spent/);
+  assert.equal(detail.querySelectorAll('.limit-detail-tooltip-wrap').length, 1);
+  assert.match(original.text, /0\.50/);
+  assert.match(original.text, /Month spent/);
+});
+
+
+test('notch detail render hold retains the current provider but releases when the hovered provider changes', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/edgeDock/dock.js'), 'utf8');
+  const start = source.indexOf('function deferBubbleRender(');
+  const end = source.indexOf('bridge.onRender(render);', start);
+  const context = {
+    surface: 'bubble', state: { payload: { omitQuotaBars: true, cell: { id: 'cline' } } },
+    contentLayer: { querySelector: () => ({ dataset: { cellId: 'codex' } }) },
+    codexAccountControl: { deferRender: () => false },
+    limitTooltipShouldHoldRender: () => true,
+    limitTooltip: { pending: false }
+  };
+  vm.runInNewContext(source.slice(start, end), context);
+  assert.equal(context.deferBubbleRender(), false, 'focused tooltip on old Codex card must not block Cline sizing');
+  context.state.payload.cell.id = 'codex';
+  assert.equal(context.deferBubbleRender(), true, 'same provider must keep the existing tooltip while data refreshes');
+  context.state.payload.omitQuotaBars = false;
+  context.state.payload.cell.id = 'cline';
+  assert.equal(context.deferBubbleRender(), true, 'ordinary EdgeDock keeps its existing behavior');
+});
+
+
+test('notch overview names each selected provider even when no account reports data', () => {
+  const adapter = notchAdapter();
+  const { LIMIT_PROVIDER_IDS } = require('../../src/shared/limits/providers');
+  for (const provider of LIMIT_PROVIDER_IDS) {
+    const overview = adapter.notchOverviewCard({ provider, accounts: [] }, dockView());
+    assert.equal(overview.find('home-list-name')?.textContent, provider);
+    assert.match(overview.text, /edgeDock.unavailable/);
+    assert.equal(cardRows(overview).length, 0);
+  }
+});
+
+
+test('notch quota ink adapts low-contrast brands without recoloring readable brands', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const dock = fs.readFileSync(path.join(root, 'src/electron/renderer/edgeDock/dock.js'), 'utf8');
+  const colors = dock.slice(dock.indexOf('function parseColor('), dock.indexOf('function limitProviderColor('));
+  const helper = source.slice(source.indexOf('function notchQuotaColor('), source.indexOf('function notchOverviewCard('));
+  let surface = '0, 0, 0', text = '#ffffff';
+  const context = {
+    document: { documentElement: {} },
+    getComputedStyle: () => ({ getPropertyValue: (key) => key === '--glass-rgb' ? surface : text })
+  };
+  vm.runInNewContext(colors + helper, context);
+  for (const color of ['#000000', '#000', '#16191e']) assert.equal(context.notchQuotaColor(color), text);
+  for (const color of ['#49a3b0', '#cc7c5e', '#4285f4']) assert.equal(context.notchQuotaColor(color), color);
+  surface = '255, 255, 255'; text = '#111111';
+  assert.equal(context.notchQuotaColor('#000000'), '#000000', 'black remains readable on a light surface');
+  assert.equal(context.notchQuotaColor('#ffffff'), text, 'white adapts on a light surface');
+});
+
+
+test('Notch shows the shared representative and deduplicates only its quotas for non-Codex accounts', () => {
+  const adapter = notchAdapter();
+  for (const provider of ['claude', 'mimo']) {
+    const records = [80, 10].map((remainingPercent, index) => ({
+      provider, status: 'ok', accountKey: `${provider}-${index}`, accountEmail: `${index}@example.test`,
+      ...(provider === 'mimo' ? { source: index ? 'local' : 'api', sourceDetail: index ? 'app' : '', accountLabel: index ? 'Desktop Membership' : 'Console' } : {}),
+      windows: [{ kind: 'weekly', remainingPercent }]
+    }));
+    const cell = buildEdgeDockCells({ limits: { providers: records } }, { items: [{ type: 'limit', provider }] })[0];
+    const view = dockView();
+    const overview = adapter.notchOverviewCard(cell, view);
+    assert.equal(overview.querySelectorAll('.home-limit-account').length, 1, provider);
+    assert.equal(overview.querySelector('.home-limit-account').dataset.limitMotionKey, cell.headlineAccount);
+    const detail = view.renderLimitProviderGroup(provider, provider, records, '#888888');
+    adapter.omitNotchQuotaRows(detail, cell);
+    const other = detail.querySelectorAll('.limit-row').find((row) => row.dataset.limitMotionKey === limitResetMotionApi.providerKey(records[0]));
+    const selected = detail.querySelectorAll('.limit-row').find((row) => row.dataset.limitMotionKey === cell.headlineAccount);
+    assert.equal(adapter.notchQuotaRows(other).length, 1, `${provider}: other account/product retains quotas`);
+    assert.equal(adapter.notchQuotaRows(selected).length, 0, `${provider}: selected quotas alone are deduplicated`);
+  }
+});
+
+test('Notch retained failures use shared status rows without adding a fake main quota', () => {
+  const adapter = notchAdapter();
+  for (const status of ['unauthorized', 'rateLimited', 'sourceRateLimited', 'unavailable', 'error', 'notConfigured']) {
+    const record = { provider: 'codex', status, accountKey: status, windows: [] };
+    const cell = buildEdgeDockCells({ limits: { providers: [record] } }, { items: [{ type: 'limit', provider: 'codex' }], includeUnavailableAccounts: true })[0];
+    const view = dockView();
+    const overview = adapter.notchOverviewCard(cell, view);
+    assert.equal(overview.querySelectorAll('.home-limit-account').length, 0, status);
+    assert.equal(adapter.notchQuotaRows(overview).length, 0, status);
+    const detail = view.renderLimitProviderSolo('codex', 'Codex', cell.accounts[0].record, '#888888');
+    const expected = view.limitAccountPlan(record);
+    assert.ok(expected && detail.text.includes(expected), status);
+    adapter.omitNotchQuotaRows(detail, cell);
+    assert.ok(detail.text.includes(expected), `${status}: deduplication must preserve status`);
+    assert.equal(adapter.notchQuotaRows(detail).length, 0, status);
+  }
+});
+
+
+test('Notch stale overview keeps its plan and quota with the shared status label', () => {
+  const adapter = notchAdapter();
+  const view = dockView();
+  const record = { provider: 'codex', status: 'ok', stale: true, planLabel: 'Pro', windows: [{ kind: 'session', remainingPercent: 64 }] };
+  const render = (provider) => adapter.notchOverviewCard({ provider: 'codex', accounts: [{ record: provider }] }, view);
+  const stale = render(record);
+  const fresh = render({ ...record, stale: false });
+  assert.ok(stale.querySelector('.home-limit-account').classNames.has('stale'));
+  assert.equal(stale.querySelector('.home-limit-plan').textContent, 'Pro · Stale');
+  assert.equal(fresh.querySelector('.home-limit-plan').textContent, 'Pro');
+  assert.equal(cardRows(stale).length, cardRows(fresh).length);
+  assert.equal(stale.querySelector('.home-limit-account-head').children.length, fresh.querySelector('.home-limit-account-head').children.length);
+});
+
+
+test('Notch ears preserve configured tray items and embedded fields across all styles', () => {
+  const trayLayout = require('../../src/shared/trayLayout');
+  const typography = require('../../src/electron/renderer/trayTypography');
+  const { buildNotchData } = require('../../src/electron/notch/data');
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const el = (tag, classes, text = '') => {
+    const node = new FakeElement(tag); node.className = classes; node.textContent = text; return node;
+  };
+  const context = {
+    el, trayTypographyApi: typography, trayBarsApi: require('../../src/electron/renderer/trayBars'), notchNumbers: new Map(), cancelAnimationFrame() {},
+    providerLabel: id => id, positionNotchSummary() {},
+    notchIcon: item => el('span', 'edge-dock-mark', item.provider),
+    notchText: (_item, row) => el('span', 'notch-text-run', row.text)
+  };
+  vm.runInNewContext(source.slice(source.indexOf('function allocateNotchSummary('), source.indexOf('function notchStatOverviewCard(')), context);
+  const stats = {
+    limits: { providers: [{ provider: 'codex', status: 'ok', accountKey: 'test', accountEmail: 'test@example.test', windows: [
+      { kind: 'session', remainingPercent: 64, resetsAt: new Date(Date.now() + 3600000).toISOString() },
+      { kind: 'weekly', remainingPercent: 74 }
+    ] }] }, periods: { today: { totalTokens: 9500, costUsd: 0 } }
+  };
+  for (const style of trayLayout.STYLE_IDS) {
+    const item = trayLayout.createTrayLayoutItem(style);
+    const icon = trayLayout.createTrayLayoutItem('providerIcon'); icon.source.provider = 'codex';
+    const cost = trayLayout.createTrayLayoutItem('cost');
+    const separator = trayLayout.createTrayLayoutItem('separatorDot');
+    const readings = !['icon', 'spacer'].includes(item.type);
+    if (readings) {
+      const summary = buildNotchData(stats, [], { notchFollowTray: false,
+        notchCustomLayout: { version: trayLayout.VERSION, items: [icon, item] } }).summary;
+      const single = context.notchSummary({ summary, geometry: { gapWidth: 179 }, appearance: {} });
+      assert.equal(single.find('notch-left').querySelectorAll('.notch-reading').length, 0, `${style} remains one field even with multiple rows`);
+      assert.equal(single.find('notch-right').querySelectorAll('.notch-reading').length, 1);
+    }
+    for (const gapWidth of [179, 0]) {
+      const summary = buildNotchData(stats, [], { notchFollowTray: false,
+        notchCustomLayout: { version: trayLayout.VERSION, items: [icon, item, separator, cost] }
+      }).summary;
+      const head = context.notchSummary({ summary, geometry: { gapWidth }, appearance: {} });
+      const left = head.find('notch-left').children[0], right = head.find('notch-right').children[0];
+      if (gapWidth && readings) {
+        assert.equal(left.children.length, 2, style);
+        assert.equal(right.children.length, 1, style);
+        assert.equal(right.dataset.notchOptional, 'true');
+        assert.equal(left.children[0].textContent, 'codex');
+        assert.equal(left.children[1].dataset.notchPrimary, 'true');
+        assert.equal(right.children[0].dataset.notchSpacer, 'false', 'no separator starts the right ear');
+        if (item.type === 'stack' || item.type === 'bars') {
+          const block = left.find(item.type === 'stack' ? 'notch-stack' : 'notch-bars');
+          assert.equal(block.children.length, item.rows?.length || item.lines.length, `${style} rows stay together`);
+          if (item.type === 'bars') {
+            assert.equal(block.style.gap, '3px');
+            for (const track of block.children) {
+              assert.equal(track.style.width, '18px', 'bars retain the compact tray width');
+              assert.equal(track.style.height, '5px');
+            }
+          }
+          if (summary.items[1].iconProvider) {
+            const field = left.find('notch-summary-field');
+            assert.equal(field.children.length, 2, 'only the embedded mark stays with its field');
+            assert.equal(field.style.gap, item.type === 'bars' ? '3px' : '2px');
+          }
+        }
+        assert.match(right.text, /0/, 'zero cost remains a displayed field');
+      } else {
+        assert.equal(left.querySelectorAll('.notch-reading').filter(node => node.dataset.notchSpacer !== 'true').length, 0, `${style} keeps readings together on the right`);
+      }
+    }
+  }
+});
+
+test('ear fitting keeps graphics whole within the hard budget', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const el = (tag, classes, text = '') => {
+    const node = new FakeElement(tag); node.className = classes; node.textContent = text;
+    node.getBoundingClientRect = () => ({ width: node.width ?? node.children.filter(child => !child.hidden)
+      .reduce((total, child, index) => total + child.getBoundingClientRect().width + (index ? 6 : 0), 0) });
+    return node;
+  };
+  const context = { el, fitNotchTypeface() {}, getComputedStyle: () => ({ zoom: 1, gap: '6px' }) };
+  vm.runInNewContext(source.slice(source.indexOf('function zoomForNotchText('), source.indexOf('function reportNotchSlots(')), context);
+  const content = el('div', 'notch-slot-content');
+  const field = el('span', 'notch-summary-field');
+  const mark = el('span', 'edge-dock-mark'); mark.width = 17;
+  const reading = el('span', 'notch-reading'); reading.width = 40;
+  field.append(mark, reading); content.append(field);
+  const primary = context.fitNotchSlot(content, 20);
+  assert.equal(primary.minimum, 63, 'the icon and primary number are both reserved');
+  assert.equal(field.hidden, true, 'an indivisible group cannot exceed the budget');
+  const optional = el('div', 'notch-slot-content'); optional.dataset.notchOptional = 'true';
+  optional.append(field);
+  const overflow = el('span', 'notch-reading notch-overflow', '⋯'); overflow.width = 8;
+  optional.append(overflow);
+  const result = context.fitNotchSlot(optional, 20);
+  assert.equal(result.minimum, 0);
+  assert.equal(field.hidden, true, 'the whole group disappears, not just its reading');
+  assert.equal(mark.hidden, undefined);
+  assert.equal(overflow.hidden, false);
+});
+
+
+test('custom summary order never infers standalone icon ownership or removes same-ear separators', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const el = (tag, classes, text = '') => { const node = new FakeElement(tag); node.className = classes; node.textContent = text; return node; };
+  const context = { el, trayTypographyApi: require('../../src/electron/renderer/trayTypography'), notchNumbers: new Map(),
+    cancelAnimationFrame() {}, providerLabel: id => id, positionNotchSummary() {},
+    notchIcon: item => el('span', 'edge-dock-mark', item.provider), notchText: (_item, row) => el('span', 'notch-text-run', row.text) };
+  vm.runInNewContext(source.slice(source.indexOf('function allocateNotchSummary('), source.indexOf('function notchStatOverviewCard(')), context);
+  const icon = provider => ({ type: 'icon', provider });
+  const text = value => ({ type: 'text', text: value });
+  const dot = { type: 'spacer', variant: 'dot' };
+  const cases = [
+    { items: [icon('codex'), icon('claude'), text('89%'), text('62%')], left: ['codex', 'claude', '89%'], right: ['62%'] },
+    { items: [icon('codex'), text('89%'), icon('claude'), text('62%')], left: ['codex', '89%'], right: ['claude', '62%'] },
+    { items: [text('51M'), dot, text('$1'), dot, text('62%')], left: ['51M'], right: ['$1', '·', '62%'] },
+    { items: [text('89%'), icon('claude'), text('62%'), icon('codex')], left: ['89%'], right: ['claude', '62%', 'codex'] }
+  ];
+  for (const row of cases) for (const gapWidth of [179, 0]) {
+    const head = context.notchSummary({ summary: { items: row.items }, geometry: { gapWidth }, appearance: {} });
+    const left = head.find('notch-left').children[0], right = head.find('notch-right').children[0];
+    const texts = node => [...node.walk()].map(n => n.textContent).filter(Boolean);
+    const actual = [...texts(left), ...texts(right)];
+    const expected = gapWidth ? [...row.left, ...row.right] : row.items.map(item => item.provider || item.text || '·');
+    assert.deepEqual(actual, expected);
+    assert.equal(left.find('notch-summary-field'), null, 'standalone icons do not become part of another field');
+    if (gapWidth) { assert.deepEqual(texts(left), row.left); assert.deepEqual(texts(right), row.right); }
+  }
+});
+
+test('primary reading survives extra standalone icons without inflating the minimum budget', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const el = (tag, classes, text = '') => {
+    const node = new FakeElement(tag); node.className = classes; node.textContent = text;
+    node.getBoundingClientRect = () => ({ width: node.width ?? node.children.filter(child => !child.hidden).reduce((sum, child, i) => sum + child.getBoundingClientRect().width + (i ? 6 : 0), 0) });
+    return node;
+  };
+  const context = { el, fitNotchTypeface() {}, getComputedStyle: () => ({ zoom: 1, gap: '6px' }) };
+  vm.runInNewContext(source.slice(source.indexOf('function zoomForNotchText('), source.indexOf('function reportNotchSlots(')), context);
+  const content = el('div', 'notch-slot-content');
+  const icons = Array.from({ length: 10 }, () => { const node = el('span', 'edge-dock-mark'); node.width = 17; return node; });
+  const reading = el('span', 'notch-reading'); reading.width = 40; reading.dataset.notchPrimary = 'true';
+  content.append(...icons, reading);
+  const overflow = el('span', 'notch-reading notch-overflow', '⋯'); overflow.width = 8; content.append(overflow);
+  const result = context.fitNotchSlot(content, 80);
+  assert.equal(result.minimum, 40, 'only the primary reading sets the minimum');
+  assert.equal(reading.hidden, false);
+  assert.equal(icons.filter(node => !node.hidden).length, 1);
+  assert.equal(overflow.hidden, false);
+  assert.ok(result.width <= 80);
+  context.fitNotchSlot(content, 40);
+  assert.ok(icons.every(node => node.hidden));
+  assert.equal(reading.hidden, false);
+  assert.equal(overflow.hidden, true);
+});
+
+
+test('switching camera clearance rebuilds the same summary without losing configured separators', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const el = (tag, classes, text = '') => { const node = new FakeElement(tag); node.className = classes; node.textContent = text; return node; };
+  const layer = el('div', 'content');
+  layer.prepend = node => { node.parent = layer; layer.children.unshift(node); };
+  const context = { el, contentLayer: layer, root: el('div', 'root'), state: { appearanceKey: 'unchanged' },
+    notchHeaderKey: '', notchClock: 0, notchNumbers: new Map(), trayTypographyApi: require('../../src/electron/renderer/trayTypography'),
+    refreshVisit: 0, refreshFeedbackTimer: null, refreshBusy: false, refreshResult: '',
+    clearTimeout() {}, cancelAnimationFrame() {}, settleNotchNumbers() {}, settleNotchStatNumbers() {}, resetRefreshVisit() {}, paintRefreshButton() {}, captureRingResetMotion() {}, animateRingResets() {},
+    notchSummaryObserver: { disconnect() {}, observe() {} }, providerLabel: id => id, positionNotchSummary() {},
+    notchIcon: item => el('span', 'edge-dock-mark', item.provider), notchText: (_item, row) => el('span', 'notch-text-run', row.text) };
+  const summarySource = source.slice(source.indexOf('function allocateNotchSummary('), source.indexOf('function notchStatOverviewCard('));
+  const renderSource = source.slice(source.indexOf('function renderNotch('), source.indexOf('  const summary = contentLayer.querySelector', source.indexOf('function renderNotch(')));
+  vm.runInNewContext(`${summarySource}\n${renderSource}\n}`, context);
+  const payload = { summary: { items: [{ type: 'icon', provider: 'codex' }, { type: 'text', text: '51M' },
+    { type: 'spacer', variant: 'dot' }, { type: 'text', text: '$1' }] }, appearance: {}, geometry: { notched: true, gapWidth: 179 } };
+  context.renderNotch(payload);
+  const attached = layer.find('notch-summary');
+  assert.equal(attached.find('notch-left').text, 'codex 51M');
+  assert.equal(attached.find('notch-right').text, '$1');
+  context.renderNotch({ ...payload, geometry: { notched: false, gapWidth: 0 } });
+  const pill = layer.find('notch-summary');
+  assert.notEqual(pill, attached);
+  assert.equal(pill.find('notch-left').text, 'codex');
+  assert.equal(pill.find('notch-right').text, '51M · $1');
+  context.renderNotch({ ...payload, geometry: { notched: true, gapWidth: 0 } });
+  assert.equal(layer.find('notch-summary'), pill, 'camera-free outlines share the compact grouping');
+  context.renderNotch(payload);
+  assert.notEqual(layer.find('notch-summary'), pill);
+  assert.equal(layer.find('notch-right').text, '$1');
+});
+
+
+test('summary text ellipsis preserves the full value and restores within a larger budget', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  for (const zoom of [1, 1.25]) {
+    const el = (tag, classes, text = '') => {
+      const node = new FakeElement(tag); node.className = classes; node.textContent = text;
+      node.getBoundingClientRect = () => {
+        const width = node.width ?? (node.classList.contains('notch-overflow') ? (node.textContent === '…' && /12px/.test(node.style.font || '') ? 12 : 8) : node.children.filter(child => !child.hidden)
+          .reduce((total, child, index) => total + child.getBoundingClientRect().width + (index ? 6 : 0), 0));
+        const maximum = parseFloat(node.style.maxWidth);
+        return { width: Number.isFinite(maximum) ? Math.min(width, maximum * zoom) : width };
+      };
+      return node;
+    };
+    const context = { el, fitNotchTypeface() {}, getComputedStyle: () => ({ zoom, gap: '6px', font: '', fontStyle: 'normal', fontWeight: '500', fontSize: '12px', fontFamily: 'sans-serif' }) };
+    vm.runInNewContext(source.slice(source.indexOf('function zoomForNotchText('), source.indexOf('function reportNotchSlots(')), context);
+    const content = el('div', 'notch-slot-content');
+    const reading = el('span', 'notch-reading');
+    const run = el('span', 'notch-text-run', 'HK$7557194.97'); run.width = 100;
+    run.dataset.horizontalScale = '1'; run.closest = () => content;
+    reading.append(run); content.append(reading);
+    const fitted = context.fitNotchSlot(content, 40);
+    assert.equal(fitted.width, 40);
+    assert.equal(run.style.maxWidth, `${40 / zoom}px`);
+    assert.equal(run.textContent, 'HK$7557194.97');
+    assert.equal(content.querySelector('.notch-overflow').hidden, true, 'native text ellipsis needs no second marker');
+    context.fitNotchSlot(content, 8);
+    assert.equal(reading.hidden, true, 'too little space for the text ellipsis cannot leave a partial glyph');
+    assert.equal(content.querySelector('.notch-overflow').hidden, false);
+    context.fitNotchSlot(content, 0);
+    assert.equal(reading.hidden, true);
+    const restored = context.fitNotchSlot(content, 200);
+    assert.equal(restored.width, 100);
+    assert.equal(run.style.maxWidth, 'none');
+    assert.equal(reading.hidden, false);
+    assert.equal(run.textContent, 'HK$7557194.97');
+  }
+});
+
+test('summary overflow marks omitted content, not removed spacing', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const context = {};
+  vm.runInNewContext(source.slice(source.indexOf('function fitNotchSummaryItems('), source.indexOf('function fitNotchSlot(')), context);
+  const reading = { width: 35, minimum: 35, spacer: false };
+  const spacer = { width: 4, minimum: 4, spacer: true };
+  const cases = [
+    { name: 'trailing decoration', items: [reading, spacer], budget: Infinity, visible: [0], overflow: false },
+    { name: 'spacing only', items: [spacer, spacer], budget: Infinity, visible: [], overflow: false },
+    { name: 'decoration exceeds clearance', items: [reading, spacer], budget: 40, visible: [0], overflow: false },
+    { name: 'optional trailing decoration', items: [reading, spacer], budget: 80, optional: true, visible: [0], overflow: false },
+    { name: 'optional spacing only', items: [spacer], budget: 80, optional: true, visible: [], overflow: false },
+    { name: 'internal separator remains', items: [reading, spacer, reading], budget: 100, visible: [0, 1, 2], overflow: false },
+    { name: 'omitted reading', items: [reading, spacer, reading], budget: 60, visible: [0], overflow: true },
+    { name: 'omitted icon beside primary', items: [{ width: 17, minimum: 17, spacer: false }, reading], budget: 50, primary: 1, visible: [1], overflow: true }
+  ];
+  for (const row of cases) {
+    const fitted = context.fitNotchSummaryItems(row.items, { budget: row.budget, gap: 6, overflowWidth: 8, primary: row.primary ?? -1, optional: row.optional === true });
+    assert.deepEqual(Array.from(fitted.visible), row.visible, row.name);
+    assert.equal(fitted.overflow, row.overflow, row.name);
+  }
+});
+
+test('summary allocation and width fitting need only ordered items and measured widths', () => {
+  const source = fs.readFileSync(path.join(root, 'src/electron/renderer/notch/renderer.js'), 'utf8');
+  const context = {};
+  vm.runInNewContext(source.slice(source.indexOf('function allocateNotchSummary('), source.indexOf('function notchSummary(')), context);
+  vm.runInNewContext(source.slice(source.indexOf('function fitNotchSummaryItems('), source.indexOf('function fitNotchSlot(')), context);
+  const types = ['icon', 'text', 'spacer', 'icon', 'stack', 'spacer', 'text'];
+  const items = Object.freeze(types.map(type => Object.freeze({ type })));
+  const plan = context.allocateNotchSummary(items, true);
+  assert.deepEqual(Array.from(plan.left), [0, 1]);
+  assert.deepEqual(Array.from(plan.right), [3, 4, 5, 6], 'only the camera split loses its separator');
+  assert.equal(plan.primary, 1);
+  const compact = context.allocateNotchSummary(items, false);
+  assert.deepEqual([...compact.left, ...compact.right], items.map((_item, index) => index));
+  assert.equal(compact.primary, null);
+  const widths = Object.freeze([
+    Object.freeze({ width: 17, minimum: 17, spacer: false }),
+    Object.freeze({ width: 40, minimum: 40, spacer: false })
+  ]);
+  const fitted = context.fitNotchSummaryItems(widths, { budget: 40, gap: 6, overflowWidth: 8, primary: 1 });
+  assert.deepEqual(Array.from(fitted.visible), [1], 'the reading survives when its independent icon does not fit');
+  assert.equal(fitted.minimum, 40);
+  assert.equal(fitted.overflow, false);
+  const embedded = context.fitNotchSummaryItems([{ width: 63, minimum: 63, spacer: false }],
+    { budget: 40, gap: 6, overflowWidth: 8, primary: 0 });
+  assert.deepEqual(Array.from(embedded.visible), [], 'an indivisible item cannot exceed the budget');
+  assert.equal(embedded.minimum, 63);
+  const hidden = context.fitNotchSummaryItems(widths, { budget: 0, gap: 6, overflowWidth: 8, optional: true });
+  assert.deepEqual(Array.from(hidden.visible), []);
+  assert.equal(hidden.overflow, false, 'unknown or occupied clearance admits no optional overflow');
 });
