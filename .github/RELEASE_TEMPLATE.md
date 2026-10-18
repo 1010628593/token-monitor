@@ -4,27 +4,26 @@
 
 <!-- app-update-notes:en:start -->
 ### Added
-- **Oh My Pi session details:** View prompts, per-reply token usage and tool records in Sessions. (#1067)
-- **Claude Desktop usage:** Supports locally retained Chat, Code and Cowork usage under Claude. (#1079)
-- **Goose on Windows:** Supports usage tracking from the default data location. (#1079)
+- **Liquid Glass (Clear):** Adds a clear glass style on macOS 26+, with separate tint controls for Regular and Clear. (#1098)
+- **Project breakdowns:** Expand a project to switch between Tools and Models token shares. (#1086)
+- **Kilo Code on macOS and Windows:** Supports usage tracking for the native VS Code extension. (#1101)
+- **Top Notch on macOS:** Adds an experimental entry, still in development and off by default. (#998)
 
 ### Improved
-- **Prompt previews:** Long text scrolls at a consistent pace on hover. (#1078)
-- **Update history:** Shows release notes for intermediate versions when updating across multiple releases. (#1070)
+- **Edge Dock glass previews:** Preview opacity, depth and tint changes while dragging the sliders. (#1098)
 
 ### Fixed
-- **Oh My Pi titles:** Hides unsupported leading icons in session titles. (#1068)
-- **Cursor quotas:** Corrects Included usage percentages and avoids using monthly figures for weekly plans. (#1073)
-- **Estimated generation speed:** Corrects estimates for partially timed sessions and reduces Codex tool-wait distortion when request timing is available. (#972)
-- **Session usage:** Corrected usage, including zero values, no longer reverts to older session totals. (#1071)
+- **Grok usage:** Includes reasoning tokens in output and total usage. (#1091)
+- **Tool token breakdowns:** Fully classified usage no longer appears as Unclassified in weekly, 7-day and 30-day ranges. (#1095)
+- **macOS Edge Dock:** Avoids stealing focus and raising the main window when clicked. (#1097)
 <!-- app-update-notes:en:end -->
 ## Download
 
-- **macOS Apple Silicon** — [Token-Monitor-0.73.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.73.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-x64.dmg)
-- **Windows Installer** — [Token-Monitor-Setup-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-Setup-0.73.0.exe) (recommended)
-- **Windows Portable** — [Token-Monitor-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.exe) (no install required)
-- **Linux x64** — [Token-Monitor-0.73.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.74.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.74.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-x64.dmg)
+- **Windows Installer** — [Token-Monitor-Setup-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-Setup-0.74.0.exe) (recommended)
+- **Windows Portable** — [Token-Monitor-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.exe) (no install required)
+- **Linux x64** — [Token-Monitor-0.74.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.AppImage)
 
 <details>
 <summary><strong>First launch and other notes</strong></summary>
@@ -60,28 +59,27 @@ Tokscale is bundled with this app and updated through Token Monitor releases. Se
 
 <!-- app-update-notes:zh:start -->
 ### 新增
-- **Oh My Pi 会话详情：** 支持在“会话”中查看提问、每回合 Tokens 用量和工具记录。 （#1067）
-- **Claude Desktop 用量：** 支持统计本机保留的 Chat、Code 和 Cowork 用量，归入 Claude。 （#1079）
-- **Windows 上的 Goose：** 支持从默认数据位置追踪用量。 （#1079）
+- **Liquid Glass（通透）：** 新增 macOS 26+ 通透玻璃样式，标准与通透样式可分别调整染色强度。 （#1098）
+- **项目分解：** 展开项目后，可切换“工具”和“模型”的 Tokens 占比。 （#1086）
+- **macOS 与 Windows 的 Kilo Code：** 新增原生 VS Code 扩展的用量追踪支持。 （#1101）
+- **macOS 顶部刘海：** 新增实验性入口，仍在开发中，默认关闭。 （#998）
 
 ### 改进
-- **提问预览：** 悬停查看长文本时，滚动速度保持一致。 （#1078）
-- **更新历史：** 跨版本更新时，可查看中间版本的更新内容。 （#1070）
+- **侧边栏玻璃预览：** 拖动滑块时，即时预览不透明度、深度与染色变化。 （#1098）
 
 ### 修复
-- **Oh My Pi 标题：** 隐藏会话标题开头无法正常显示的图标。 （#1068）
-- **Cursor 额度：** 修正 Included 用量比例，避免每周方案误用月度数据。 （#1073）
-- **估算生成速度：** 修正仅部分回复有计时数据时的估算；有请求计时数据时，减少 Codex 工具等待造成的偏差。 （#972）
-- **会话用量：** 修正后的用量（包括零值）不再被旧会话总量覆盖。 （#1071）
+- **Grok 用量：** 将推理 Tokens 计入输出与总用量。 （#1091）
+- **工具用量分类：** 修复本周、最近 7 天和最近 30 天将已分类用量显示为未分类的问题。 （#1095）
+- **macOS 侧边栏：** 修复点击时抢占焦点、可能弹出主窗口的问题。 （#1097）
 <!-- app-update-notes:zh:end -->
 
 ## 下载
 
-- **macOS Apple Silicon** — [Token-Monitor-0.73.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.73.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-x64.dmg)
-- **Windows 安装版** — [Token-Monitor-Setup-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-Setup-0.73.0.exe)（推荐）
-- **Windows 便携版** — [Token-Monitor-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.exe)（免安装）
-- **Linux x64** — [Token-Monitor-0.73.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.74.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.74.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-x64.dmg)
+- **Windows 安装版** — [Token-Monitor-Setup-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-Setup-0.74.0.exe)（推荐）
+- **Windows 便携版** — [Token-Monitor-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.exe)（免安装）
+- **Linux x64** — [Token-Monitor-0.74.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.AppImage)
 
 <details>
 <summary><strong>首次启动与其他说明</strong></summary>
@@ -112,7 +110,7 @@ Tokscale 已随应用内置，并通过 Token Monitor 发布版本更新。你�
 ---
 
 <details>
-<summary><strong>Full Changelog:</strong> <a href="https://github.com/Javis603/token-monitor/compare/v0.72.0...v0.73.0">v0.72.0...v0.73.0</a></summary>
+<summary><strong>Full Changelog:</strong> <a href="https://github.com/Javis603/token-monitor/compare/v0.73.0...v0.74.0">v0.73.0...v0.74.0</a></summary>
 
 <!-- github-generated-release-notes -->
 
@@ -130,28 +128,27 @@ Tokscale 已随应用内置，并通过 Token Monitor 发布版本更新。你�
 
 <!-- app-update-notes:zh-TW:start -->
 ### 新增
-- **Oh My Pi 會話詳情：** 支援在「會話」中查看提問、每回合 Token 用量與工具記錄。 （#1067）
-- **Claude Desktop 用量：** 支援統計本機保留的 Chat、Code 與 Cowork 用量，歸入 Claude。 （#1079）
-- **Windows 上的 Goose：** 支援從預設資料位置追蹤用量。 （#1079）
+- **Liquid Glass（通透）：** 新增 macOS 26+ 通透玻璃樣式，標準與通透樣式可分別調整染色強度。 （#1098）
+- **專案分解：** 展開專案後，可切換「工具」與「模型」的 Token 佔比。 （#1086）
+- **macOS 與 Windows 的 Kilo Code：** 新增原生 VS Code 擴充功能的用量追蹤支援。 （#1101）
+- **macOS 頂部瀏海：** 新增實驗性入口，仍在開發中，預設關閉。 （#998）
 
 ### 改進
-- **提問預覽：** 懸停查看長文字時，捲動速度保持一致。 （#1078）
-- **更新歷史：** 跨版本更新時，可查看中間版本的更新內容。 （#1070）
+- **側邊欄玻璃預覽：** 拖曳滑桿時，即時預覽不透明度、深度與染色變化。 （#1098）
 
 ### 修復
-- **Oh My Pi 標題：** 隱藏會話標題開頭無法正常顯示的圖示。 （#1068）
-- **Cursor 額度：** 修正 Included 用量比例，避免每週方案誤用月度資料。 （#1073）
-- **估算生成速度：** 修正僅部分回覆有計時資料時的估算；有請求計時資料時，減少 Codex 工具等待造成的偏差。 （#972）
-- **會話用量：** 修正後的用量（包括零值）不再被舊會話總量覆蓋。 （#1071）
+- **Grok 用量：** 將推理 Token 計入輸出與總用量。 （#1091）
+- **工具用量分類：** 修復本週、最近 7 日與最近 30 日將已分類用量顯示為未分類的問題。 （#1095）
+- **macOS 側邊欄：** 修復點擊時搶佔焦點、可能彈出主視窗的問題。 （#1097）
 <!-- app-update-notes:zh-TW:end -->
 
 ## 下載
 
-- **macOS Apple Silicon** — [Token-Monitor-0.73.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.73.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-x64.dmg)
-- **Windows 安裝版** — [Token-Monitor-Setup-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-Setup-0.73.0.exe)（推薦）
-- **Windows 便攜版** — [Token-Monitor-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.exe)（免安裝）
-- **Linux x64** — [Token-Monitor-0.73.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.74.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.74.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-x64.dmg)
+- **Windows 安裝版** — [Token-Monitor-Setup-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-Setup-0.74.0.exe)（推薦）
+- **Windows 便攜版** — [Token-Monitor-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.exe)（免安裝）
+- **Linux x64** — [Token-Monitor-0.74.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.AppImage)
 
 </details>
 
@@ -164,28 +161,27 @@ Tokscale 已随应用内置，并通过 Token Monitor 发布版本更新。你�
 
 <!-- app-update-notes:ko:start -->
 ### 추가
-- **Oh My Pi 세션 상세:** ‘세션’에서 프롬프트, 응답별 토큰 사용량과 도구 기록을 확인할 수 있습니다. (#1067)
-- **Claude Desktop 사용량:** 이 컴퓨터에 남아 있는 Chat, Code, Cowork 사용량을 Claude에 합산합니다. (#1079)
-- **Windows의 Goose:** 기본 데이터 위치에서 사용량을 추적할 수 있습니다. (#1079)
+- **Liquid Glass (투명):** macOS 26 이상에서 투명 유리 스타일을 지원하며, 기본 스타일과 투명 스타일의 색조 강도를 각각 조절할 수 있습니다. (#1098)
+- **프로젝트 분석:** 프로젝트를 펼치면 ‘도구’와 ‘모델’별 토큰 비중을 전환할 수 있습니다. (#1086)
+- **macOS 및 Windows의 Kilo Code:** 네이티브 VS Code 확장 프로그램의 사용량을 추적할 수 있습니다. (#1101)
+- **macOS 상단 노치:** 개발 중인 실험적 기능으로 추가했으며, 기본적으로 꺼져 있습니다. (#998)
 
 ### 개선
-- **프롬프트 미리보기:** 마우스를 올리면 긴 텍스트가 일정한 속도로 스크롤됩니다. (#1078)
-- **업데이트 기록:** 여러 버전을 건너뛰어 업데이트할 때 중간 버전의 업데이트 내용도 확인할 수 있습니다. (#1070)
+- **가장자리 도크의 유리 효과 미리보기:** 슬라이더를 드래그하는 동안 불투명도, 깊이, 색조 변화를 바로 확인할 수 있습니다. (#1098)
 
 ### 수정
-- **Oh My Pi 제목:** 세션 제목 앞에 제대로 표시되지 않는 아이콘을 숨깁니다. (#1068)
-- **Cursor 한도:** Included 사용률을 바로잡고, 주간 요금제에 월간 수치가 적용되는 문제를 수정했습니다. (#1073)
-- **예상 생성 속도:** 일부 응답에만 시간 정보가 있을 때의 추정치를 바로잡았습니다. 요청 시간 정보가 있으면 Codex의 도구 대기로 인한 오차도 줄어듭니다. (#972)
-- **세션 사용량:** 0으로 수정된 경우를 포함해, 수정한 사용량이 이전 세션 합계로 되돌아가는 문제를 해결했습니다. (#1071)
+- **Grok 사용량:** 추론 토큰을 출력 및 전체 사용량에 포함합니다. (#1091)
+- **도구 토큰 분류:** 이번 주, 최근 7일, 최근 30일 범위에서 이미 분류된 사용량이 미분류로 표시되는 문제를 수정했습니다. (#1095)
+- **macOS 가장자리 도크:** 클릭할 때 포커스를 빼앗거나 메인 창이 앞으로 나오는 문제를 수정했습니다. (#1097)
 <!-- app-update-notes:ko:end -->
 
 ## 다운로드
 
-- **macOS Apple Silicon** — [Token-Monitor-0.73.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.73.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-x64.dmg)
-- **Windows 설치 버전** — [Token-Monitor-Setup-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-Setup-0.73.0.exe) (권장)
-- **Windows 포터블 버전** — [Token-Monitor-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.exe) (설치 필요 없음)
-- **Linux x64** — [Token-Monitor-0.73.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.74.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.74.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-x64.dmg)
+- **Windows 설치 버전** — [Token-Monitor-Setup-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-Setup-0.74.0.exe) (권장)
+- **Windows 포터블 버전** — [Token-Monitor-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.exe) (설치 필요 없음)
+- **Linux x64** — [Token-Monitor-0.74.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.AppImage)
 
 </details>
 
@@ -198,28 +194,27 @@ Tokscale 已随应用内置，并通过 Token Monitor 发布版本更新。你�
 
 <!-- app-update-notes:ja:start -->
 ### 追加
-- **Oh My Pi のセッション詳細:** 「セッション」でプロンプト、応答ごとのトークン使用量、ツールの記録を確認できます。 (#1067)
-- **Claude Desktop の使用量:** このコンピューターに残っている Chat、Code、Cowork の使用量を Claude に集計します。 (#1079)
-- **Windows の Goose:** 既定のデータ保存先から使用量を追跡できるようになりました。 (#1079)
+- **Liquid Glass（クリア）:** macOS 26 以降でクリアなガラススタイルに対応。標準とクリアの色合いの強さを個別に調整できます。 (#1098)
+- **プロジェクトの内訳:** プロジェクトを展開すると、トークン比率を「ツール」別と「モデル」別で切り替えられます。 (#1086)
+- **macOS・Windows の Kilo Code:** ネイティブの VS Code 拡張機能の使用量追跡に対応しました。 (#1101)
+- **macOS の上部ノッチ:** 開発中の実験的機能として追加しました。初期状態ではオフです。 (#998)
 
 ### 改善
-- **プロンプトのプレビュー:** マウスを重ねたとき、長いテキストが一定の速度でスクロールします。 (#1078)
-- **更新履歴:** 複数のバージョンをまたいで更新するとき、途中のバージョンの更新内容も確認できます。 (#1070)
+- **エッジドックのガラス効果プレビュー:** スライダーを動かしながら、不透明度、深さ、色合いの変化を確認できます。 (#1098)
 
 ### 修正
-- **Oh My Pi のタイトル:** セッションタイトルの先頭で正しく表示されないアイコンを非表示にしました。 (#1068)
-- **Cursor の利用枠:** Included の使用率を修正し、週単位のプランに月単位の数値が使われる問題を解消しました。 (#1073)
-- **推定生成速度:** 一部の応答にしか時間情報がない場合の推定値を修正しました。リクエストの時間情報があれば、Codex のツール待機によるずれも抑えます。 (#972)
-- **セッションの使用量:** 0 への修正を含め、修正した使用量が以前のセッション合計に戻る問題を解消しました。 (#1071)
+- **Grok の使用量:** 推論トークンを出力と合計使用量に含めるよう修正しました。 (#1091)
+- **ツールのトークン分類:** 今週・過去 7 日・過去 30 日の範囲で、分類済みの使用量が未分類と表示される問題を修正しました。 (#1095)
+- **macOS のエッジドック:** クリック時にフォーカスを奪ったり、メインウィンドウが前面に出たりする問題を修正しました。 (#1097)
 <!-- app-update-notes:ja:end -->
 
 ## ダウンロード
 
-- **macOS Apple Silicon** — [Token-Monitor-0.73.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-arm64.dmg)
-- **macOS Intel** — [Token-Monitor-0.73.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0-x64.dmg)
-- **Windows インストーラー** — [Token-Monitor-Setup-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-Setup-0.73.0.exe)（推奨）
-- **Windows ポータブル版** — [Token-Monitor-0.73.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.exe)（インストール不要）
-- **Linux x64** — [Token-Monitor-0.73.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.73.0/Token-Monitor-0.73.0.AppImage)
+- **macOS Apple Silicon** — [Token-Monitor-0.74.0-arm64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-arm64.dmg)
+- **macOS Intel** — [Token-Monitor-0.74.0-x64.dmg](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0-x64.dmg)
+- **Windows インストーラー** — [Token-Monitor-Setup-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-Setup-0.74.0.exe)（推奨）
+- **Windows ポータブル版** — [Token-Monitor-0.74.0.exe](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.exe)（インストール不要）
+- **Linux x64** — [Token-Monitor-0.74.0.AppImage](https://github.com/Javis603/token-monitor/releases/download/v0.74.0/Token-Monitor-0.74.0.AppImage)
 
 </details>
 
