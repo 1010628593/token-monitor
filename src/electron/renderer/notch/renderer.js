@@ -7,6 +7,21 @@
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.TokenMonitorNotchRenderer = api;
 })(typeof window !== 'undefined' ? window : null, function createNotchRendererApi() {
+  // Optical proportions live in the space below the physical camera band.
+  // Motion frames already include content zoom; applying zoom again here would
+  // change the balance as cards grow, shrink or hit the screen's height limit.
+  const NOTCH_GLASS_PROFILE = Object.freeze({ cap: 0.30, fade: 0.63 });
+  function notchGlassGeometry(cameraHeight, bodyHeight) {
+    const camera = Number.isFinite(cameraHeight) ? Math.max(0, cameraHeight) : 0;
+    const body = Number.isFinite(bodyHeight) ? Math.max(0, bodyHeight) : 0;
+    return {
+      capEnd: camera + body * NOTCH_GLASS_PROFILE.cap,
+      fadeEnd: camera + body * (NOTCH_GLASS_PROFILE.cap + NOTCH_GLASS_PROFILE.fade),
+      rimTop: camera,
+      rimBottom: camera + body
+    };
+  }
+
   function createNotchRenderer({ document, window, bridge, surface, state, root, shapeLayer, contentLayer, shared }) {
     const {
       el, t, appearance, prefersReducedMotion, readableColor, providerLabel, limitProviderColor,
@@ -631,6 +646,53 @@
 
     // Shape-only frames never reconstruct the summary, provider rows or numbers.
     // Persistent summary nodes keep equal outer margins on this same frame.
+    function paintHardwareShade(frame) {
+      if (!state.payload?.geometry?.notched) return;
+      let shade = shapeLayer.querySelector('.notch-hardware-shade');
+      if (!shade) {
+        const svg = (name) => document.createElementNS('http://www.w3.org/2000/svg', name);
+        const defs = svg('defs'), gradient = svg('linearGradient');
+        gradient.id = 'notch-hardware-gradient';
+        gradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+        gradient.setAttribute('x1', '0'); gradient.setAttribute('x2', '0');
+        for (const [index, offset] of [0, 0.35, 0.72, 1].entries()) {
+          const stop = svg('stop');
+          stop.setAttribute('offset', offset);
+          stop.setAttribute('stop-color', '#000');
+          stop.setAttribute('class', `notch-hardware-stop-${index}`);
+          gradient.append(stop);
+        }
+        const rimGradient = svg('linearGradient');
+        rimGradient.id = 'notch-rim-gradient';
+        rimGradient.setAttribute('gradientUnits', 'userSpaceOnUse');
+        rimGradient.setAttribute('x1', '0'); rimGradient.setAttribute('x2', '0');
+        for (const [offset, opacity] of [[0, 0], [0.45, 0.025], [0.8, 0.1], [1, 0.22]]) {
+          const stop = svg('stop');
+          stop.setAttribute('offset', offset);
+          stop.setAttribute('stop-color', '#fff');
+          stop.setAttribute('stop-opacity', opacity);
+          rimGradient.append(stop);
+        }
+        defs.append(gradient, rimGradient);
+        shade = svg('path'); shade.setAttribute('class', 'notch-hardware-shade');
+        shade.setAttribute('fill', 'url(#notch-hardware-gradient)');
+        const rim = svg('path'); rim.setAttribute('class', 'notch-glass-rim');
+        rim.setAttribute('stroke', 'url(#notch-rim-gradient)');
+        shapeLayer.append(defs, shade, rim);
+      }
+      // The same frame drives the shade and rim, including live resizing,
+      // interrupted motion and spring overshoot. Rest/peek stays opaque in CSS.
+      const profile = notchGlassGeometry(state.payload.geometry.height, frame.bodyHeight);
+      const gradient = shapeLayer.querySelector('#notch-hardware-gradient');
+      gradient.setAttribute('y1', profile.capEnd);
+      gradient.setAttribute('y2', profile.fadeEnd);
+      shade.setAttribute('d', frame.shape.d);
+      const rimGradient = shapeLayer.querySelector('#notch-rim-gradient');
+      rimGradient.setAttribute('y1', profile.rimTop);
+      rimGradient.setAttribute('y2', profile.rimBottom);
+      shapeLayer.querySelector('.notch-glass-rim').setAttribute('d', frame.shape.d);
+    }
+
     function applyNotchMotion(frame) {
       if (!frame?.shape) return;
       const shape = frame.shape;
@@ -645,6 +707,7 @@
       // Shell and content share one progress value.
       const contentProgress = Math.max(0, Math.min(1, frame.progress));
       root.style.setProperty('--notch-content-progress', contentProgress);
+      paintHardwareShade(frame);
       // Content shows early while opening and is gone before the shell settles
       // when closing; its size follows the shell's width, overshoot included.
       root.style.setProperty('--notch-content-opacity', Math.max(0, Math.min(1, frame.progress * 1.4 - 0.2)));
@@ -838,6 +901,8 @@
       omitQuotaRows: omitNotchQuotaRows,
       applyAppearance(payload) {
         document.documentElement.classList.toggle('notch-black', payload.style === 'black');
+        document.documentElement.classList.toggle('notch-hardware-light', surface === 'notch' && payload.style !== 'black' && payload.geometry?.notched === true
+          && window.TokenMonitorThemePresets?.isLightHex(payload.appearance?.themeColors?.bg) === true);
         root.classList.toggle('is-notch-detail', surface === 'bubble');
       },
       sessionCells() {
@@ -850,5 +915,5 @@
       repaint() { notchClock++; renderNotch(state.payload); }
     };
   }
-  return { createNotchRenderer };
+  return { createNotchRenderer, notchGlassGeometry };
 });
