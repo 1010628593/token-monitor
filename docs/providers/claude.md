@@ -68,6 +68,8 @@ An identity-resolution failure after successful OAuth quota is not allowed to fa
 
 OAuth usage refreshes reactively after unauthorized responses. Non-macOS platforms may also refresh shortly before expiry; macOS avoids proactive delegated refresh because it spawns Claude Code. Windows credential-file discovery includes running WSL homes when no explicit config root overrides it.
 
+CLI subprocesses set `CLAUDE_CODE_SKIP_PROMPT_HISTORY=1` to suppress prompt history and session transcripts, including the interactive `/usage` fallback and `/status` delegated refresh. This is scoped to the probe process and does not change the user's Claude settings. `--no-session-persistence` is print-mode-only and cannot replace it for these interactive screens. Existing probe transcripts and copies already imported by other tools are not removed; account-side session creation is a separate, unverified boundary.
+
 ## Usage-limit reset grants
 
 Both usage responses carry Anthropic's reset coupons in a `cedar_ember` block only when the request asks for it, so every OAuth and Web usage call sends `cedar_ember=1` — the same request, not an extra fetch. Grants that still hold resets and have not reached `ends_at` map onto `provider.resetCredits` with per-grant detail (label, cleared windows, usability flags); spent and lapsed grants are dropped so the count never promises a reset the account cannot use.

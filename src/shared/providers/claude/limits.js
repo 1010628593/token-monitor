@@ -1702,7 +1702,8 @@ function withClaudePathHints(env = process.env, platform = process.platform) {
   return {
     ...env,
     [pathKey]: uniqueStrings([...hints, ...currentPath.split(delimiter)]).join(delimiter),
-    DISABLE_AUTOUPDATER: '1'
+    DISABLE_AUTOUPDATER: '1',
+    CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1'
   };
 }
 
@@ -1817,6 +1818,8 @@ async function runClaudePtyProbe(slashCommand, exitMarkerRegex, deps = {}) {
   const runEnv = {
     ...env,
     DISABLE_AUTOUPDATER: '1',
+    // Interactive /usage and /status probes must not become saved conversations.
+    CLAUDE_CODE_SKIP_PROMPT_HISTORY: '1',
     TERM: env.TERM && env.TERM !== 'dumb' ? env.TERM : 'xterm-256color',
     COLORTERM: env.COLORTERM || 'truecolor',
     TOKEN_MONITOR_CLAUDE_COMMAND_PATH: command,
