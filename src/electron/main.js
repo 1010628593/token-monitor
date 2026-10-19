@@ -420,7 +420,9 @@ const { applyWindowsChrome } = require('./windowsChrome');
 const { installWindowsNonActivatingInput } = require('./windowsNonActivatingInput');
 const { canUseEdgeDock, createEdgeDockController, edgeDockSupported } = require('./edgeDock/controller');
 const { createNotchController, normalizeNotchStyle, normalizeNotchShape, normalizeNotchDetailSide, normalizeNotchHoverAction, normalizeNotchHoverDelay } = require('./notch/controller');
-const { buildNotchData, summaryLayout: notchSummaryLayout } = require('./notch/data');
+const { buildNotchData, notchSummaryMode, summaryLayout: notchSummaryLayout } = require('./notch/data');
+const { NOTCH_PANEL_STAT_ITEMS, notchLimitItems, notchPanelItems, notchWeek } = require('./notch/panel');
+const { createNotchHistory } = require('./notch/history');
 const trayLayoutApi = require('../shared/trayLayout');
 const { createFullScreenProbe } = require('./edgeDock/fullScreenProbe');
 const {
@@ -629,13 +631,14 @@ function defaultSettings() {
     notchEnabled: false,
     notchStyle: 'inherit',
     notchShape: 'auto',
-    notchFollowTray: true,
+    notchSummaryMode: 'sessions',
     notchSummaryEnabled: true,
     notchCustomLayout: createDefaultTrayLayout(),
     notchDisplayId: null,
     notchItems: null,
     notchDetailSide: 'right',
     notchRunningIndicatorEnabled: false,
+    notchWarnColors: false,
     notchHoverAction: 'peek',
     notchHoverDelay: 0,
     notchAvoidMenuBar: true,
@@ -2745,6 +2748,7 @@ function readSettings() {
     merged.notchItems = normalizeEdgeDockItems(merged.notchItems);
     merged.notchDetailSide = normalizeNotchDetailSide(merged.notchDetailSide);
     merged.notchRunningIndicatorEnabled = parseBoolean(merged.notchRunningIndicatorEnabled, false);
+    merged.notchWarnColors = parseBoolean(merged.notchWarnColors, false);
     merged.notchHoverAction = normalizeNotchHoverAction(merged.notchHoverAction);
     merged.notchHoverDelay = normalizeNotchHoverDelay(merged.notchHoverDelay);
     merged.notchAvoidMenuBar = parseBoolean(merged.notchAvoidMenuBar, true);
@@ -2752,7 +2756,7 @@ function readSettings() {
     merged.notchProgressiveBlur = parseBoolean(merged.notchProgressiveBlur, true);
     merged.notchHideSummaryInFullScreen = parseBoolean(merged.notchHideSummaryInFullScreen, true);
     merged.notchRefreshEnabled = parseBoolean(merged.notchRefreshEnabled, false);
-    merged.notchFollowTray = parseBoolean(merged.notchFollowTray, true);
+    merged.notchSummaryMode = notchSummaryMode(merged);
     merged.notchSummaryEnabled = parseBoolean(merged.notchSummaryEnabled, true);
     merged.notchCustomLayout = normalizeTrayLayout(merged.notchCustomLayout);
     merged.notchDisplayId = normalizeEdgeDockDisplayId(merged.notchDisplayId);
@@ -5596,8 +5600,8 @@ function notchDataFor(visibleStats, cells) {
     notchRateTrackers.clear();
     return buildNotchData(visibleStats, cells, settings);
   }
-  const layout = notchSummaryLayout(settings);
-  const rateItems = trayLayoutApi.liveTokenRateItems(layout);
+  // Only an explicit tray or custom layout can request a rate.
+  const rateItems = ['tray', 'custom'].includes(notchSummaryMode(settings)) ? trayLayoutApi.liveTokenRateItems(notchSummaryLayout(settings)) : [];
   const liveTokenRates = {};
   let nextExpiry = 0;
   const scopes = new Set(rateItems.map((item) => item.rateScope));
@@ -5762,7 +5766,8 @@ let edgeDockRateTimer = null;
 
 function configuredDockItemLists() {
   return [...(settings?.edgeDockEnabled !== false ? [settings?.edgeDockItems] : []),
-    ...(settings?.notchEnabled === true && process.platform === 'darwin' ? [settings?.notchItems] : [])];
+    // The notch panel's fixed readouts plus its limit selection (null: automatic).
+    ...(settings?.notchEnabled === true && process.platform === 'darwin' ? [notchLimitItems(settings), NOTCH_PANEL_STAT_ITEMS] : [])];
 }
 
 function edgeDockShowsLiveRate() {
@@ -5894,10 +5899,10 @@ let edgeDockForecastAt = 0;
 let edgeDockForecastInFlight = false;
 
 function edgeDockForecastWanted() {
-  if (settings?.codexResetForecastEnabled !== true) return false;
-  // Automatic selections may contain Codex; either independent surface can ask.
-  return configuredDockItemLists().some((items) => !Array.isArray(items)
-    || items.some((item) => item.type === 'limit' && item.provider === 'codex'));
+  if (settings?.codexResetForecastEnabled !== true || settings?.edgeDockEnabled === false) return false;
+  // The Notch's fixed readouts do not draw the dock card's forecast.
+  const items = settings?.edgeDockItems;
+  return !Array.isArray(items) || items.some((item) => item.type === 'limit' && item.provider === 'codex');
 }
 
 function refreshEdgeDockForecast() {
@@ -5982,10 +5987,25 @@ const EDGE_DOCK_EXPIRY_FLOOR_MS = 1_000;
 // armed from what is actually on screen rather than re-projecting to find out.
 let edgeDockLastCells = [];
 let notchLastCells = [];
+// Remote History reloads are throttled: past days move at most once per collection.
+const NOTCH_REMOTE_HISTORY_INTERVAL_MS = 60 * 1000;
+const notchHistory = createNotchHistory({
+  load: async (stats) => {
+    const history = await getDashboardHistory({ includeDevices: true });
+    const sources = fixedPeriodRangesApi.joinDeviceHistorySources(history?.deviceHistories || [], stats?.devices || []);
+    return { ...history, devicesComplete: sources.every((source) => source.historyAvailable === true) };
+  },
+  minIntervalMs: () => completeHistorySource(historyResolverOptions()) === 'remote' ? NOTCH_REMOTE_HISTORY_INTERVAL_MS : 0,
+  changed: () => repaintDockSurfaces(),
+  onError: (error) => console.log(`[notch] history failed: ${error.message}`)
+});
 
 function pushNotchCells(visibleStats) {
-  notchLastCells = edgeDockCellsFor(visibleStats, settings.notchItems, { includeUnavailableAccounts: true });
-  notchController.setData(notchDataFor(visibleStats, notchLastCells));
+  notchLastCells = edgeDockCellsFor(visibleStats, notchPanelItems(visibleStats, settings), { includeUnavailableAccounts: true });
+  const data = notchDataFor(visibleStats, notchLastCells);
+  const history = notchHistory.read(visibleStats, { enabled: settings.historyEnabled !== false, generation: hubModeGeneration });
+  if (history) data.panel.week = notchWeek(visibleStats, new Date(), history);
+  notchController.setData(data);
   scheduleSessionExpiry();
 }
 
@@ -7969,6 +7989,7 @@ app.whenReady().then(() => {
       notchItems: normalizeEdgeDockItems('notchItems' in (patch || {}) ? patch.notchItems : settings.notchItems),
       notchDetailSide: normalizeNotchDetailSide(patch.notchDetailSide ?? settings.notchDetailSide),
       notchRunningIndicatorEnabled: parseBoolean(patch.notchRunningIndicatorEnabled ?? settings.notchRunningIndicatorEnabled, false),
+      notchWarnColors: parseBoolean(patch.notchWarnColors ?? settings.notchWarnColors, false),
       notchHoverAction: normalizeNotchHoverAction(patch.notchHoverAction ?? settings.notchHoverAction),
       notchHoverDelay: normalizeNotchHoverDelay(patch.notchHoverDelay ?? settings.notchHoverDelay),
       notchAvoidMenuBar: parseBoolean(patch.notchAvoidMenuBar ?? settings.notchAvoidMenuBar, true),
@@ -7976,7 +7997,7 @@ app.whenReady().then(() => {
       notchProgressiveBlur: parseBoolean(patch.notchProgressiveBlur ?? settings.notchProgressiveBlur, true),
       notchHideSummaryInFullScreen: parseBoolean(patch.notchHideSummaryInFullScreen ?? settings.notchHideSummaryInFullScreen, true),
       notchRefreshEnabled: parseBoolean(patch.notchRefreshEnabled ?? settings.notchRefreshEnabled, false),
-      notchFollowTray: parseBoolean(patch.notchFollowTray ?? settings.notchFollowTray, true),
+      notchSummaryMode: notchSummaryMode({ notchSummaryMode: patch.notchSummaryMode ?? settings.notchSummaryMode }),
       notchSummaryEnabled: parseBoolean(patch.notchSummaryEnabled ?? settings.notchSummaryEnabled, true),
       notchCustomLayout: normalizeTrayLayout(patch.notchCustomLayout ?? settings.notchCustomLayout),
       notchDisplayId: normalizeEdgeDockDisplayId(patch.notchDisplayId ?? settings.notchDisplayId),

@@ -248,10 +248,12 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
   function glassOptions(surface) {
     const mode = backdropMode();
     // An attached panel joins a black camera housing, so its material keeps a
-    // dark appearance even when the widget uses a light palette. Detached
-    // capsules and detail cards retain the widget's appearance.
+    // dark appearance even when the widget uses a light palette. The hardware
+    // scrim owns its tint: applying the widget tint too would darken it twice.
+    // Detached capsules and detail cards retain the widget's appearance/tint.
     const attached = surface === 'notch' && layout()?.geometry.notched;
-    return { dark: attached || liquidGlass()?.dark === true, style: liquidGlassStyle(mode), tintOpacity: liquidGlassTint(settings(), mode) };
+    return { dark: attached || liquidGlass()?.dark === true, style: liquidGlassStyle(mode),
+      tintOpacity: attached ? 0 : liquidGlassTint(settings(), mode) };
   }
 
   function shape(surface, points, bounds, display) {
@@ -275,7 +277,9 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
     const win = windows[surface];
     if (!alive(win) || !ready[surface] || !current) return;
     const base = { surface, notch: true, shape: shapes[surface], platform, osRelease: os.release(),
-      appearance: { ...appearance, zoomFactor: zoom(), edgeDockRunningIndicatorEnabled: settings().notchRunningIndicatorEnabled === true }, style: normalizeNotchStyle(settings().notchStyle), glass: nativeMaterial[surface] === true, liquidGlass: Boolean(glass[surface]) };
+      appearance: { ...appearance, zoomFactor: zoom(), notchWarnColors: settings().notchWarnColors === true,
+        edgeDockWarnColors: settings().notchWarnColors === true,
+        edgeDockRunningIndicatorEnabled: settings().notchRunningIndicatorEnabled === true }, style: normalizeNotchStyle(settings().notchStyle), glass: nativeMaterial[surface] === true, liquidGlass: Boolean(glass[surface]) };
     const hasSummary = summaryVisible();
     if (surface === 'notch') {
       // Measurement results must not invalidate the request that produced them.
@@ -288,7 +292,7 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
         flare: current.geometry.notched ? NOTCH_METRICS.openFlare : 0,
         gapOffset: current.geometry.centerX - current.geometry.gapWidth / 2 - current.closed.x,
         shoulder: current.geometry.notched && hasSummary ? NOTCH_METRICS.restingFlare : 0 },
-      cells: data.cells, summary: hasSummary ? data.summary : null,
+      cells: data.cells, summary: hasSummary ? data.summary : null, panel: data.panel || null,
       summaryMeasurement: summaryMeasurement && { id: summaryMeasurement.id, measuring: summaryMeasurement.measuring },
       refreshEnabled: settings().notchRefreshEnabled === true,
       refreshable: expanded && settings().notchRefreshEnabled === true && canRefreshLimits() === true }

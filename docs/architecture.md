@@ -110,6 +110,12 @@ Sessions, Home and Edge Dock group the complete member set before applying displ
 
 `sessionTitlesEnabled` defaults on and affects Electron presentation only. `src/electron/sessionTitleDisplay.js` hides titles from snapshots, all-time pulls and detail headings without changing collection, metadata caches or local archives. Sync consent is independent, defaults off, and requires the [shared sync protocol](#shared-sync-content).
 
+## Notch presentation
+
+The experimental macOS Notch owns its fixed pages under `renderer/notch/` and shares data projection, formatting, account-title and plan semantics, and Home's compact window order (`homeOverview.compactWindowRank`) with the other surfaces. Stored `notchItems` now selects only limit providers, their order, hidden accounts and the Codex account policy; old usage items and pinned windows are ignored. `notchSummaryMode` defaults to `sessions` and deliberately does not convert the old follow-tray flag; `notchDetailSide` stays readable but has no effect. Attached glass uses the camera scrim as its only tint layer instead of adding the native tint again. Automatic quota alerts rank and display the tightest metered pool of the shared headline account; hidden or unselected accounts do not supply alerts.
+
+The seven-day chart takes its newest bar from live Today accounting and past days from History (`notch/history.js`). A missing day stays unknown, and reads as zero only when the transport is available and every joined device answered for its History. The answer is dropped when the backend generation, local date or History enablement changes; a new revision keeps the previous answer until the reload lands, and remote reloads are throttled to one a minute.
+
 ## Widget mode switching
 
 `settings.hubMode` selects the source: `local` uses the local IPC collector; `client` uses Hub SSE plus this device's sync collector; `host` adds an embedded Hub; `icloud` uses local collection and iCloud file reconciliation instead of SSE. A live agent PID suppresses widget Hub uploads and owns the local daily-history archive. The agent has no iCloud sink, so the widget must still publish its iCloud record while yielding archive writes.
