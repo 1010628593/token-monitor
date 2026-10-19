@@ -820,7 +820,12 @@ test('Claude Web authentication failure does not silently fall back to another l
   assert.equal(spawned, false);
 });
 
-test('Claude limits fall back to direct CLI usage on Windows when OAuth usage is unavailable', async () => {
+test('Claude limits fall back to direct CLI usage in the probe directory on Windows', async t => {
+  const fixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claude-direct-probe-'));
+  t.after(() => fs.rm(fixtureDir, { recursive: true, force: true }));
+  const probeDir = path.join(fixtureDir, 'probe');
+  const spawnUsage = fakeSpawnForClaudeUsage();
+  let spawnedCwd;
   const provider = await fetchClaudeLimits({}, {
     platform: 'win32',
     env: { CLAUDE_CODE_SKIP_PROMPT_HISTORY: '0' },
@@ -840,9 +845,15 @@ test('Claude limits fall back to direct CLI usage on Windows when OAuth usage is
     }),
     existsSync: () => false,
     isClaudeCliAuthenticated: async () => true,
-    spawn: fakeSpawnForClaudeUsage()
+    claudeProbeDir: probeDir,
+    spawn: (command, args, options) => {
+      spawnedCwd = options.cwd;
+      return spawnUsage(command, args, options);
+    }
   });
 
+  assert.equal(spawnedCwd, probeDir);
+  assert.equal((await fs.stat(probeDir)).isDirectory(), true);
   assert.equal(provider.provider, 'claude');
   assert.equal(provider.status, 'ok');
   assert.equal(provider.source, 'cli');

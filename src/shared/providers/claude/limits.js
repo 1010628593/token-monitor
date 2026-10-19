@@ -13,6 +13,7 @@ const { BROWSER_USER_AGENT } = require('../../browserUserAgent');
 const { normalizeLimitProvider } = require('../../limits/core');
 const { abortError } = require('../../probeDeadline');
 const { hashKey } = require('../../hashKey');
+const { claudeProbeDir } = require('./probe');
 const {
   PLAN_LABEL_ALIASES,
   TOKEN_MONITOR_USER_AGENT,
@@ -1813,7 +1814,7 @@ async function runClaudePtyProbe(slashCommand, exitMarkerRegex, deps = {}) {
   const platform = deps.platform || process.platform;
   const command = existingClaudeCommandCandidates(claudeCommandCandidates(env, platform), deps)[0];
   if (!command) throw errorWithStatus('notConfigured', 'Claude CLI not found');
-  const probeDir = deps.claudeProbeDir || path.join(os.tmpdir(), 'token-monitor-claude-probe');
+  const probeDir = claudeProbeDir(deps);
   fs.mkdirSync(probeDir, { recursive: true });
   const runEnv = {
     ...env,
@@ -1905,9 +1906,11 @@ async function runClaudeUsageCli(deps = {}) {
 }
 
 function runClaudeDirectUsageCli(deps = {}) {
+  const probeDir = claudeProbeDir(deps);
+  fs.mkdirSync(probeDir, { recursive: true });
   return runClaudeDirectCommand(
     ['/usage'],
-    deps,
+    { ...deps, cwd: probeDir },
     Number(deps.claudeDirectCliTimeoutMs || 12000)
   );
 }
