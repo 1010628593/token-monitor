@@ -9,6 +9,9 @@ html.notch-black .edge-dock-shape-line { stroke: transparent; }
 .notch-hardware-shade, .notch-glass-rim { display: none; pointer-events: none; }
 html:not(.notch-black) .is-notch-attached .notch-hardware-shade,
 html:not(.notch-black) .is-notch-attached .notch-glass-rim { display: inline; }
+/* Native glass paints its camera cap in the material transaction. Keep the SVG
+   fallback for vibrancy; drawing both would darken the panel twice. */
+html:not(.notch-black) .is-notch-attached.has-native-hardware-shade :is(.notch-hardware-shade, .notch-glass-rim) { display: none; }
 .notch-hardware-stop-0 { stop-opacity: 1; }
 .notch-hardware-stop-1 { stop-opacity: calc(1 - var(--notch-content-progress, 0) * .36); }
 .notch-hardware-stop-2 { stop-opacity: calc(1 - var(--notch-content-progress, 0) * .68); }
@@ -41,6 +44,8 @@ html.notch-black .edge-dock-root[data-surface="notch"] .edge-dock-shape {
 .notch-left { justify-content: flex-start; padding-left: calc(var(--notch-shoulder, 0px) + 8px); box-sizing: border-box; }
 .notch-right { justify-content: flex-end; padding-right: calc(var(--notch-shoulder, 0px) + 8px); box-sizing: border-box; }
 .notch-slot-content { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; width: max-content; zoom: var(--notch-summary-zoom, 1); }
+.notch-left .notch-slot-content { transform-origin: left center; }
+.notch-right .notch-slot-content { transform-origin: right center; }
 .notch-summary-field { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 .notch-gap { flex: 0 0 auto; }
 .notch-summary .edge-dock-mark { flex-shrink: 0; width: 17px; height: 17px; }

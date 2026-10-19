@@ -212,9 +212,9 @@ test('open flare stays within the physical notch height at every list size and z
 test('equal ears reserve the wider content and preserve the physical notch center', () => {
   const geometry = notchGeometry(display, native);
   const closed = notchBounds(display, geometry, false, 180, { left: 17, right: 36 });
-  assert.equal(closed.width, 289);
-  assert.equal(closed.x + 55, 646);
-  assert.equal(closed.x + closed.width - 55, 825);
+  assert.equal(closed.width, 179 + 2 * (36 + 16 + NOTCH_METRICS.restingFlare));
+  assert.equal(closed.x + 36 + 16 + NOTCH_METRICS.restingFlare, 646);
+  assert.equal(closed.x + closed.width - 36 - 16 - NOTCH_METRICS.restingFlare, 825);
   assert.equal(notchBounds(display, geometry, false, 180, null).width, 179 + 2 * NOTCH_METRICS.restingFlare, 'a quiet shell hugs the camera with its resting flares');
   const open = notchBounds(display, geometry, true, 800, { left: 17, right: 36 }, 1.5);
   assert.ok(Math.abs(open.x + open.width / 2 - geometry.centerX) <= 0.5, 'expanded shell remains centered on the physical notch');
@@ -487,6 +487,29 @@ test('reversing the shell starts at the current shape without a jump or window f
   assert.equal(after.bodyHeight, before.bodyHeight);
   assert.equal(after.progress, before.progress);
   assert.equal(primary.opacity, 1);
+});
+
+test('attached Liquid Glass forwards the camera shade on every material frame and removes it on a capsule', (t) => {
+  const material = [];
+  const f = fixture(t, { notchStyle: 'liquid-glass-clear' }, { reducedMotion: false,
+    nativeGlass: () => true, liquidGlass: () => ({ dark: true }),
+    createGlass: () => ({ hardwareShade: true, update: value => material.push(value), dispose() {} }) });
+  const win = f.windows[0], head = last(win).geometry;
+  f.screen.point = { x: win.bounds.x + head.headerX + 20, y: 10 };
+  f.controller.poll(100); f.controller.poll(240);
+  const animation = win.messages.filter(message => message.channel === 'topNotch:animate').at(-1).payload;
+  for (const elapsed of [80, 160, 240, animation.duration]) {
+    f.ipcMain.emit('topNotch:frame', { sender: win.webContents }, { id: animation.id, elapsed });
+    const payload = last(win), frame = win.messages.filter(message => message.channel === 'topNotch:motion').at(-1).payload;
+    const native = material.filter(value => value.shape).at(-1);
+    assert.equal(payload.nativeHardwareShade, true);
+    assert.equal(native.hardwareShade.progress, frame.progress);
+    assert.deepEqual(native.hardwareShade, { ...require('../../src/electron/renderer/notch/renderer').notchGlassGeometry(payload.geometry.height, frame.bodyHeight), progress: frame.progress });
+    assert.equal(require('../../src/electron/renderer/edgeDock/shapes').toSvgPath(native.shape.commands), frame.shape.d);
+    assert.equal(native.tintOpacity, 0, 'the native cap is the only attached tint');
+  }
+  f.preferences.notchShape = 'pill'; f.controller.sync();
+  assert.equal(material.filter(value => value.shape).at(-1).hardwareShade, undefined);
 });
 
 // Exercise the production renderer's coordinate conversion: CSS zoom also
@@ -976,6 +999,149 @@ test('hover grows the entry by default and opens on click; open mode waits for t
   assert.equal(last(open.windows[0]).expanded, true);
 });
 
+test('hover growth scales both ears with the shell and keeps the camera gap fixed', (t) => {
+  for (const shape of ['auto', 'pill']) {
+    const f = fixture(t, { notchShape: shape, notchHoverAction: 'peek' }, { reducedMotion: false });
+    f.controller.setData({ cells: [], summary: { items: [{ type: 'text', text: '123.45M' }] } });
+    const win = f.windows[0], geometry = last(win).geometry;
+    const frame = () => win.messages.filter(message => message.channel === 'topNotch:motion').at(-1).payload;
+    const animation = () => win.messages.filter(message => message.channel === 'topNotch:animate').at(-1).payload;
+    const rest = frame();
+    f.screen.point = { x: geometry.centerX, y: geometry.y + 10 };
+    f.controller.poll(1000);
+    const grow = animation();
+    f.ipcMain.emit('topNotch:frame', { sender: win.webContents }, { id: grow.id, elapsed: 80 });
+    const middle = frame();
+    assert.ok(middle.summaryScale > 1 && middle.summaryScale < 1.2);
+    assert.ok(middle.summaryEdges.left < rest.summaryEdges.left);
+    assert.ok(middle.summaryEdges.right > rest.summaryEdges.right);
+    f.ipcMain.emit('topNotch:frame', { sender: win.webContents }, { id: grow.id, elapsed: grow.duration });
+    const grown = frame();
+    assert.equal(grown.summaryScale, (geometry.height + NOTCH_METRICS.peekDrop) / geometry.height);
+    assert.equal(grown.summaryHeight, geometry.height + NOTCH_METRICS.peekDrop);
+    assert.equal(grown.progress, 0, 'growing keeps the panel hidden');
+    assert.equal(last(win).geometry.gapWidth, geometry.gapWidth, 'the physical camera never scales');
+    assert.equal(grown.summaryEdges.left + grown.summaryEdges.right, rest.summaryEdges.left + rest.summaryEdges.right);
+    f.screen.point = { x: 20, y: 400 }; f.controller.poll(1100);
+    const shrink = animation();
+    f.ipcMain.emit('topNotch:frame', { sender: win.webContents }, { id: shrink.id, elapsed: shrink.duration });
+    assert.equal(frame().summaryScale, 1);
+    assert.deepEqual(frame().summaryEdges, rest.summaryEdges);
+    assert.equal(frame().shape.d, rest.shape.d);
+  }
+});
+
+test('wide hover summaries stay outside the camera through overshoot, reversal and opening at every zoom', (t) => {
+  for (const zoom of [0.8, 1, 1.2]) for (const widths of [[160, 160], [17, 240], [240, 42], [0, 160], [160, 0]]) {
+    let down = false;
+    const f = fixture(t, { notchHoverAction: 'peek', notchSize: 'custom', notchCustomScale: zoom },
+      { reducedMotion: false, primaryButtonDown: () => down });
+    f.controller.setData({ cells: [], summary: { items: [{ type: 'text', text: 'Long summary' }] } });
+    const win = f.windows[0];
+    f.ipcMain.emit('topNotch:size', { sender: win.webContents }, { slots: { left: widths[0], right: widths[1] } });
+    const frame = () => win.messages.filter(message => message.channel === 'topNotch:motion').at(-1).payload;
+    const animation = () => win.messages.filter(message => message.channel === 'topNotch:animate').at(-1).payload;
+    const check = () => {
+      const g = last(win).geometry, m = frame();
+      const leftEnd = win.bounds.x + m.summaryEdges.left + widths[0] * m.summaryScale;
+      const rightStart = win.bounds.x + m.summaryEdges.right - widths[1] * m.summaryScale;
+      assert.ok(leftEnd <= g.centerX - g.gapWidth / 2 - 8 + 1e-8, `left clearance at zoom ${zoom}, widths ${widths}`);
+      assert.ok(rightStart >= g.centerX + g.gapWidth / 2 + 8 - 1e-8, `right clearance at zoom ${zoom}, widths ${widths}`);
+    };
+    const tick = elapsed => { f.ipcMain.emit('topNotch:frame', { sender: win.webContents }, { id: animation().id, elapsed }); check(); };
+    tick(animation().duration);
+    f.screen.point = { x: last(win).geometry.centerX, y: 10 }; f.controller.poll(1000);
+    for (let elapsed = 0; elapsed < animation().duration; elapsed += 16) tick(elapsed);
+    tick(animation().duration);
+    assert.ok(frame().summaryScale > 1 && frame().summaryScale < 37 / 32, 'wide summaries still grow within their available clearance');
+    f.screen.point = { x: 20, y: 400 }; f.controller.poll(1100); tick(30);
+    f.screen.point = { x: last(win).geometry.centerX, y: 10 }; f.controller.poll(1200); tick(60);
+    down = true; f.controller.poll(1300);
+    for (let elapsed = 0; elapsed < animation().duration; elapsed += 16) tick(elapsed);
+    tick(animation().duration);
+  }
+});
+
+test('live summary width changes preserve camera clearance while the hover shell resizes', (t) => {
+  const f = fixture(t, { notchHoverAction: 'peek' }, { reducedMotion: false });
+  f.controller.setData({ cells: [], summary: { items: [{ type: 'text', text: 'Live summary' }] } });
+  const win = f.windows[0];
+  const frame = () => win.messages.filter(message => message.channel === 'topNotch:motion').at(-1).payload;
+  const animation = () => win.messages.filter(message => message.channel === 'topNotch:animate').at(-1).payload;
+  const tick = elapsed => f.ipcMain.emit('topNotch:frame', { sender: win.webContents }, { id: animation().id, elapsed });
+  tick(animation().duration);
+  f.screen.point = { x: last(win).geometry.centerX, y: 10 }; f.controller.poll(1000);
+  tick(animation().duration);
+  for (const [left, right, iconInset] of [[160, 17, 12.5], [42, 240, 0], [0, 0, 0], [17, 42, 0]]) {
+    f.ipcMain.emit('topNotch:size', { sender: win.webContents }, { slots: { left, right, iconInset } });
+    for (let elapsed = 0; elapsed <= animation().duration + 16; elapsed += 16) {
+      tick(Math.min(elapsed, animation().duration));
+      const g = last(win).geometry, m = frame();
+      const leftEnd = win.bounds.x + m.summaryEdges.left + m.summaryIconInset - iconInset + left * m.summaryScale;
+      const rightStart = win.bounds.x + m.summaryEdges.right - right * m.summaryScale;
+      if (left) assert.ok(leftEnd <= g.centerX - g.gapWidth / 2 - 8 + 1e-8, 'resizing left content clears the camera');
+      if (right) assert.ok(rightStart >= g.centerX + g.gapWidth / 2 + 8 - 1e-8, 'resizing right content clears the camera');
+      assert.ok(Number.isFinite(m.summaryScale), 'empty slots do not produce invalid transforms');
+    }
+  }
+});
+
+test('hover reversal and clicking through to the panel preserve the in-flight content scale', (t) => {
+  let down = false;
+  const f = fixture(t, { notchHoverAction: 'peek' }, { reducedMotion: false, primaryButtonDown: () => down });
+  const win = f.windows[0], geometry = last(win).geometry;
+  const frame = () => win.messages.filter(message => message.channel === 'topNotch:motion').at(-1).payload;
+  const animation = () => win.messages.filter(message => message.channel === 'topNotch:animate').at(-1).payload;
+  const tick = elapsed => f.ipcMain.emit('topNotch:frame', { sender: win.webContents }, { id: animation().id, elapsed });
+  f.screen.point = { x: geometry.centerX, y: 10 }; f.controller.poll(1000); tick(90);
+  const before = frame();
+  f.screen.point = { x: 20, y: 400 }; f.controller.poll(1100); tick(0);
+  assert.equal(frame().summaryScale, before.summaryScale);
+  assert.deepEqual(frame().summaryEdges, before.summaryEdges);
+  tick(30);
+  const reversing = frame();
+  f.screen.point = { x: geometry.centerX, y: 10 }; down = true; f.controller.poll(1200); tick(0);
+  assert.equal(frame().summaryScale, reversing.summaryScale);
+  assert.deepEqual(frame().summaryEdges, reversing.summaryEdges);
+  tick(animation().duration);
+  assert.equal(frame().summaryScale, 1);
+  assert.equal(frame().progress, 1);
+});
+
+test('hover outline scales its shoulders and lower corners together', () => {
+  const rest = notchCommands(300, 32, true, false, 32);
+  const scale = 37 / 32;
+  const grown = notchCommands(320, 37, true, false, 32);
+  assert.equal(grown[1][5], rest[1][5] * scale, 'shoulder height');
+  assert.equal(grown[2][2], rest[2][2] * scale, 'lower corner starts at the matching proportion');
+  assert.equal(grown[3][5], rest[3][5] * scale, 'lower corner radius');
+});
+
+test('the renderer scales each ear around its outer edge without scaling the camera gap', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/notch/renderer.js'), 'utf8');
+  const code = source.slice(source.indexOf('function applyNotchMotion('), source.indexOf('function renderNotchPanel('));
+  const css = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/notch/notch.css'), 'utf8');
+  assert.match(css, /\.notch-left \.notch-slot-content\s*\{[^}]*transform-origin:\s*left center/);
+  assert.match(css, /\.notch-right \.notch-slot-content\s*\{[^}]*transform-origin:\s*right center/);
+  for (const summaryZoom of [0.8, 1, 1.2]) {
+    const left = { style: {} }, right = { style: {} }, gap = { style: { width: '179px' } };
+    const head = { dataset: {}, style: {}, querySelector: selector => selector.includes('notch-left') ? left : selector.includes('notch-right') ? right : gap };
+    const apply = vm.runInNewContext(`${code}; applyNotchMotion`, {
+      state: { payload: { geometry: { headerX: 0, headerWidth: 300, shoulder: 8, summaryZoom } } },
+      shapeLayer: { firstChild: true, dataset: {}, setAttribute() {}, querySelector: () => ({ setAttribute() {} }) },
+      contentLayer: { querySelector: selector => selector === '.notch-summary' ? head : null },
+      root: { style: { setProperty() {} } }, paintHardwareShade() {}
+    });
+    apply({ shape: { d: '', width: 400, height: 100 }, progress: 0, summaryHeight: 37, summaryScale: 37 / 32, summaryEdges: { left: 10, right: 290 } });
+    for (const [node, expected] of [[left, -6], [right, 6]]) {
+      assert.equal(Number(node.style.transform.match(/translateX\(([-\d.]+)px\)/)[1]) * summaryZoom, expected);
+      assert.equal(Number(node.style.transform.match(/scale\(([-\d.]+)\)/)[1]), 37 / 32);
+    }
+    assert.equal(head.style.height, '37px');
+    assert.equal(gap.style.width, '179px');
+  }
+});
+
 test('full-screen approach suppresses held drags and keeps unknown buttons reachable', (t) => {
   for (const held of [true, null]) {
     const f = fixture(t, {}, { primaryButtonDown: () => held, isFullScreen: () => true });
@@ -1051,7 +1217,7 @@ test('menu avoidance bounds all active summary fields and keeps the camera cente
   const primary = f.windows[0];
   f.ipcMain.emit('topNotch:size', { sender: primary.webContents }, { slots: { left: 17, right: 600, minimumLeft: 17, minimumRight: 37 } });
   let geometry = last(primary).geometry;
-  assert.equal(geometry.summaryBudget, 42);
+  assert.equal(geometry.summaryBudget, 45 - NOTCH_METRICS.restingFlare);
   assert.equal(geometry.headerWidth, 301, 'raw widths above 220pt are budgeted, not silently mismeasured');
   assert.equal(geometry.gapOffset, (geometry.headerWidth - geometry.gapWidth) / 2);
   f.controller.poll(Date.now() + 1000);
@@ -1064,7 +1230,7 @@ test('menu avoidance bounds all active summary fields and keeps the camera cente
   assert.equal(geometry.headerWidth, 213);
   windows = null;
   f.screen.emit('display-metrics-changed');
-  assert.equal(last(primary).geometry.summaryBudget, 626, 'unknown menu clearance falls back to the screen capacity');
+  assert.equal(last(primary).geometry.summaryBudget, 629 - NOTCH_METRICS.restingFlare, 'unknown menu clearance falls back to the screen capacity');
 });
 
 
@@ -1077,8 +1243,8 @@ test('disabled menu avoidance retains full summary widths and stops menu samplin
   const primary = f.windows[0];
   f.ipcMain.emit('topNotch:size', { sender: primary.webContents }, { slots: { left: 17, right: 300, minimumLeft: 17, minimumRight: 300 } });
   assert.equal(reads, 0);
-  assert.equal(last(primary).geometry.summaryBudget, 626);
-  assert.equal(last(primary).geometry.headerWidth, 817);
+  assert.equal(last(primary).geometry.summaryBudget, 629 - NOTCH_METRICS.restingFlare);
+  assert.equal(last(primary).geometry.headerWidth, 811 + 2 * NOTCH_METRICS.restingFlare);
   f.preferences.notchAvoidMenuBar = true;
   f.controller.poll(Date.now() + 2500);
   assert.equal(reads, 1);
@@ -1087,7 +1253,7 @@ test('disabled menu avoidance retains full summary widths and stops menu samplin
   f.controller.sync();
   f.controller.poll(Date.now() + 5000);
   assert.equal(reads, 1, 'disabled avoidance performs no native menu reads');
-  assert.equal(last(primary).geometry.summaryBudget, 626);
+  assert.equal(last(primary).geometry.summaryBudget, 629 - NOTCH_METRICS.restingFlare);
 });
 
 test('capsules keep their complete summary and skip menu reads regardless of avoidance', (t) => {
@@ -1180,7 +1346,7 @@ test('a single custom label preserves shared formatting and uses the menu budget
   f.controller.setData(data);assert.equal(reads, 1);
   const primary = f.windows[0];
   f.ipcMain.emit('topNotch:size', { sender: primary.webContents }, { slots: { left: 0, right: 42, minimumLeft: 0, minimumRight: 0 } });
-  assert.equal(last(primary).geometry.summaryBudget, 42);
+  assert.equal(last(primary).geometry.summaryBudget, 45 - NOTCH_METRICS.restingFlare);
   assert.equal(last(primary).geometry.headerWidth, 301);
 });
 
@@ -1601,7 +1767,7 @@ test('menu budgets apply to notch shapes with or without a physical gap', () => 
 test('camera-free renderer fits the display limit while reserving a complete primary readout before extra icons', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/notch/renderer.js'), 'utf8');
   const code = source.slice(source.indexOf('function notchLogicalPoint('), source.indexOf('function reportNotchContentSize('));
-  const left = { minimum: 17, width: 300, children: [] }, right = { minimum: 40, width: 500 };
+  const left = { style: {}, minimum: 17, width: 300, children: [] }, right = { style: {}, minimum: 40, width: 500 };
   let reported;
   const report = vm.runInNewContext(`${code}; reportNotchSlots`, {
     state: { payload: { summary: {}, geometry: { gapWidth: 0, shoulder: 4, summaryBudget: 76 }, appearance: { zoomFactor: 1 } } },
@@ -1619,6 +1785,28 @@ test('camera-free renderer fits the display limit while reserving a complete pri
   left.getBoundingClientRect = () => ({ left: 0 });
   report({ dataset: {}, querySelector: selector => selector.includes('notch-left') ? left : right });
   assert.equal(reported.iconInset, 0, 'an app mark must not borrow the second provider mark inset');
+});
+
+test('live summary measurement ignores hover enlargement and restores both visual transforms', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/notch/renderer.js'), 'utf8');
+  const code = source.slice(source.indexOf('function notchLogicalPoint('), source.indexOf('function reportNotchContentSize('));
+  const left = { style: { transform: 'translateX(-6px) scale(1.15625)' }, width: 17, children: [] };
+  const right = { style: { transform: 'translateX(6px) scale(1.15625)' }, width: 42 };
+  const reports = [];
+  const report = vm.runInNewContext(`${code}; reportNotchSlots`, {
+    state: { payload: { summary: {}, geometry: { gapWidth: 179, summaryBudget: 200 }, appearance: { zoomFactor: 1 } } },
+    fitNotchSlot: slot => ({ width: slot.width * (slot.style.transform === 'none' ? 1 : 1.15625), minimum: slot.width }),
+    lastNotchSlots: '', bridge: { reportNotchSize: (_height, slots) => reports.push(slots) }
+  });
+  const head = { dataset: {}, querySelector: selector => selector.includes('notch-left') ? left : right };
+  report(head);
+  assert.equal(reports[0].left, 17);
+  assert.equal(reports[0].right, 42);
+  assert.equal(left.style.transform, 'translateX(-6px) scale(1.15625)');
+  assert.equal(right.style.transform, 'translateX(6px) scale(1.15625)');
+  left.style.transform = right.style.transform = 'none';
+  report(head);
+  assert.equal(reports.length, 1, 'hover exit cannot cause another native resize');
 });
 
 test('rings preserve summary icon scale and grow only hardware-free entries', (t) => {
@@ -1818,6 +2006,46 @@ test('material failure still falls back when native cleanup also throws', (t) =>
   assert.equal(last(f.windows[0]).glass, false);
   assert.ok(messages.some(text => text.includes('fixture material failure')));
   assert.doesNotThrow(() => f.controller.stop());
+});
+
+test('a mid-animation material failure restores fallback state on the failing frame', (t) => {
+  for (const cleanupThrows of [false, true]) {
+    let fail = false, updates = 0, disposals = 0;
+    const f = fixture(t, { notchStyle: 'liquid-glass-clear' }, {
+      reducedMotion: false, nativeGlass: () => true, liquidGlass: () => ({ dark: true }),
+      createGlass: () => ({ hardwareShade: true,
+        update() { updates++; if (fail) throw new Error('injected animation material failure'); },
+        dispose() { disposals++; if (cleanupThrows) throw new Error('injected cleanup failure'); }
+      })
+    });
+    const win = f.windows[0], geometry = last(win).geometry;
+    f.screen.point = { x: geometry.centerX, y: 10 }; f.controller.poll(1000);
+    const animation = win.messages.filter(message => message.channel === 'topNotch:animate').at(-1).payload;
+    const tick = elapsed => f.ipcMain.emit('topNotch:frame', { sender: win.webContents }, { id: animation.id, elapsed });
+    tick(80);
+    assert.equal(last(win).nativeHardwareShade, true, 'glass initialized and painted successfully');
+    fail = true;
+    const start = win.messages.length;
+    tick(120);
+    const messages = win.messages.slice(start);
+    const fallback = messages.find(message => message.channel === 'topNotch:render')?.payload;
+    assert.ok(fallback, 'failure must notify the renderer before the animation completes');
+    assert.equal(fallback.glass, false);
+    assert.equal(fallback.liquidGlass, false);
+    assert.equal(fallback.nativeHardwareShade, false);
+    assert.ok(fallback.motion.progress > 0 && fallback.motion.progress < 1);
+    assert.equal(fallback.motion.motionId, animation.id);
+    assert.deepEqual(fallback.motion, messages.find(message => message.channel === 'topNotch:motion').payload);
+    assert.ok(fallback.motion.shape.d, 'the fallback receives the current outline');
+    assert.equal(disposals, 1);
+    const stopped = updates, renderCount = win.messages.filter(message => message.channel === 'topNotch:render').length;
+    tick(160);
+    assert.equal(updates, stopped, 'the failed native material is not retried');
+    assert.equal(win.messages.filter(message => message.channel === 'topNotch:render').length, renderCount, 'ordinary frames stay shape-only');
+    tick(animation.duration);
+    assert.equal(last(win).nativeHardwareShade, false);
+    assert.equal(last(win).motion.progress, 1);
+  }
 });
 
 test('unexpectedly closed windows cannot be polled or receive stale IPC', (t) => {
@@ -2234,7 +2462,7 @@ test('disabling menu avoidance still bounds both ears to the screen capacity', (
   const primary = f.windows[0];
   f.ipcMain.emit('topNotch:size', { sender: primary.webContents }, { slots: { left: 1000, right: 2000 } });
   const geometry = last(primary).geometry;
-  assert.equal(geometry.summaryBudget, 626);
+  assert.equal(geometry.summaryBudget, 629 - NOTCH_METRICS.restingFlare);
   assert.equal(geometry.headerWidth, 1469);
   assert.equal((geometry.headerWidth - geometry.gapWidth) / 2 - 16 - NOTCH_METRICS.restingFlare, geometry.summaryBudget);
 });
@@ -2242,7 +2470,7 @@ test('disabling menu avoidance still bounds both ears to the screen capacity', (
 test('both physical ears use the same finite budget', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/notch/renderer.js'), 'utf8');
   const code = source.slice(source.indexOf('function notchLogicalPoint('), source.indexOf('function reportNotchContentSize('));
-  const left = { minimum: 50, width: 67, children: [] }, right = { minimum: 0, width: 89 };
+  const left = { style: {}, minimum: 50, width: 67, children: [] }, right = { style: {}, minimum: 0, width: 89 };
   let reported;
   const report = vm.runInNewContext(`${code}; reportNotchSlots`, {
     state: { payload: { summary: {}, geometry: { gapWidth: 179, summaryBudget: 50 }, appearance: { zoomFactor: 1 } } },
@@ -2406,7 +2634,7 @@ test('transformed summary measurements ignore subpixel noise before rounding log
   const source = fs.readFileSync(path.join(__dirname, '../../src/electron/renderer/notch/renderer.js'), 'utf8');
   const start = source.includes('function notchLogicalPoint(') ? 'function notchLogicalPoint(' : 'function reportNotchSlots(';
   const code = source.slice(source.indexOf(start), source.indexOf('function reportNotchContentSize('));
-  const left = { width: 28, minimum: 28, children: [] }, right = { width: 27, minimum: 27 };
+  const left = { style: {}, width: 28, minimum: 28, children: [] }, right = { style: {}, width: 27, minimum: 27 };
   const reports = [];
   const context = { state: { payload: { summary: {}, geometry: { gapWidth: 179 }, appearance: { zoomFactor: 1 } } },
     fitNotchSlot: slot => slot, lastNotchSlots: '', bridge: { reportNotchSize: (_height, slots) => reports.push(slots) } };
@@ -2576,7 +2804,7 @@ test('camera-free notch avoidance uses one centered budget and hides an empty re
   });
   f.controller.setData(buildNotchData(stats(), [], { trayContent: 'tokens' }));
   const win = f.windows[0];
-  assert.equal(last(win).geometry.summaryBudget, 292);
+  assert.equal(last(win).geometry.summaryBudget, 298 - 2 * NOTCH_METRICS.restingFlare);
   assert.equal(reads, 1);
   f.preferences.notchAvoidMenuBar = false;
   f.controller.sync();

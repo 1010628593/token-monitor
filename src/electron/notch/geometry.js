@@ -11,10 +11,10 @@ const NOTCH_METRICS = Object.freeze({
   openHeight: 240,
   openRadius: 40.5,
   openFlare: 18,
-  restingRadius: 10,
-  restingFlare: 3,
+  restingRadius: 12,
+  restingFlare: 8,
   // Hover feedback without opening: the resting outline grows a little.
-  peekGrow: 7,
+  peekGrow: 10,
   peekDrop: 5,
   // Room for the open spring's overshoot, as a share of each axis' travel.
   overshoot: 0.12,
@@ -135,13 +135,14 @@ function notchCanvasBounds(open, closed, zoom = 1) {
   return { x: left, y: open.y, width: Math.ceil(open.x + open.width + x) - left, height: open.height + y };
 }
 
-function notchCommands(width, height, notched, expanded, _notchHeight = 32, zoom = 1) {
+function notchCommands(width, height, notched, expanded, notchHeight = 32, zoom = 1) {
   if (!notched) return bubbleCommands({ width, height, tail: 0, tailY: 0, neck: 0, radius: expanded ? NOTCH_METRICS.openRadius * zoom : height / 2 });
   // One path topology at every endpoint, so each control point moves
   // continuously: concave flares into the menu bar, straight sides and round
   // lower corners. Endpoints past the open state extrapolate the same path.
-  const f = Math.max(0, Math.min(expanded ? NOTCH_METRICS.openFlare * zoom : NOTCH_METRICS.restingFlare, width / 4, height / 3));
-  const r = Math.max(0, Math.min(expanded ? NOTCH_METRICS.openRadius * zoom : NOTCH_METRICS.restingRadius, height - f, (width - 2 * f) / 2));
+  const hoverScale = notchHeight > 0 ? height / notchHeight : 1;
+  const f = Math.max(0, Math.min(expanded ? NOTCH_METRICS.openFlare * zoom : NOTCH_METRICS.restingFlare * hoverScale, width / 4, height / 3));
+  const r = Math.max(0, Math.min(expanded ? NOTCH_METRICS.openRadius * zoom : NOTCH_METRICS.restingRadius * hoverScale, height - f, (width - 2 * f) / 2));
   // Resting corners stay circular like the hardware notch; open corners use
   // longer handles, a continuous-curvature corner that eases out of the side.
   const k = expanded ? 0.32 : 0.448;

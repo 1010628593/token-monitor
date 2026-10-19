@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { NOTCH_METRICS, notchPeekBounds, notchCanvasBounds, notchGeometry, notchBounds, notchSummaryMaxWidth, notchCommands, translateCommands, interpolateCommands, rectContains } = require('./geometry');
 const { toSvgPath } = require('../renderer/edgeDock/shapes');
+const { notchGlassGeometry } = require('../renderer/notch/renderer');
 const { readMacNotchScreens } = require('./screen');
 const { notchBlurBounds } = require('./blur');
 const { readMacMenuWindows } = require('./menuBar');
@@ -25,7 +26,7 @@ const NOTCH_HOVER_DELAYS = [0, 100, 200, 300, 400, 500, 600];
 const NOTCH_SPRINGS = Object.freeze({
   open: { response: 0.45, damping: 0.62 },
   close: { response: 0.42, damping: 1 },
-  peek: { response: 0.3, damping: 0.6 },
+  peek: { response: 0.32, damping: 0.68 },
   unpeek: { response: 0.3, damping: 1 }
 });
 
@@ -251,14 +252,14 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
       tintOpacity: attached ? 0 : liquidGlassTint(settings(), mode) };
   }
 
-  function shape(surface, points, bounds, display) {
+  function shape(surface, points, bounds, display, hardwareShade) {
     const d = toSvgPath(points);
-    const key = `${display.id}:${display.scaleFactor}:${d}`;
+    const key = `${display.id}:${display.scaleFactor}:${d}:${JSON.stringify(hardwareShade ?? null)}`;
     if (shapes[surface]?.key === key && shapes[surface]?.width === bounds.width && shapes[surface]?.height === bounds.height) return;
     shapes[surface] = { key, width: bounds.width, height: bounds.height, d };
     const win = windows[surface];
     try {
-      if (glass[surface]) glass[surface].update({ ...glassOptions(surface), shape: { commands: points, width: bounds.width, height: bounds.height } });
+      if (glass[surface]) glass[surface].update({ ...glassOptions(surface), shape: { commands: points, width: bounds.width, height: bounds.height }, hardwareShade });
       else if (nativeMaterial[surface] && applyShapeMask?.(win, points, bounds.width, bounds.height, display) !== true) {
         nativeMaterial[surface] = false;
         win.setVibrancy(null);
@@ -281,6 +282,7 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
     if (!hasSummary) summaryMeasurement = null;
     else if (!summaryMeasured && summaryMeasurement?.key !== measurementKey) summaryMeasurement = { id: ++summaryGeneration, key: measurementKey, measuring: true };
     const payload = { ...base, expanded, visible: expanded, quietFullScreen: fullScreen, motion: frame,
+      nativeHardwareShade: glass.notch?.hardwareShade === true,
       geometry: { ...current.geometry, summaryBudget: current.summaryBudget, headerX: current.closed.x - (viewport || current.canvas).x, headerWidth: current.closed.width,
         flare: current.geometry.notched ? NOTCH_METRICS.openFlare : 0,
         gapOffset: current.geometry.centerX - current.geometry.gapWidth / 2 - current.closed.x,
@@ -312,12 +314,14 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
   }
 
   function summaryEdges(current) {
-    const shoulder = current.geometry.notched && summaryVisible() ? NOTCH_METRICS.restingFlare : 0;
-    const left = current.closed.x + shoulder + 8;
-    const right = current.closed.x + current.closed.width - shoulder - 8;
+    const bounds = peeked && !expanded ? current.peek : current.closed;
+    const scale = bounds.height / current.closed.height;
+    const shoulder = current.geometry.notched && summaryVisible() ? NOTCH_METRICS.restingFlare * scale : 0;
+    const left = bounds.x + shoulder + 8 * scale;
+    const right = bounds.x + bounds.width - shoulder - 8 * scale;
     const origin = (viewport || current.canvas).x;
-    // Summary elements remain one group during expansion; only a changed
-    // readout width moves their mirrored edges to a new resting position.
+    // The ears move outward with hover growth while their contents scale.
+    // The hardware camera gap itself stays fixed; opening fades the summary.
     return { left: left - origin, right: right - origin };
   }
 
@@ -330,10 +334,29 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
     const xs = points.flatMap(([, ...values]) => values.filter((_, i) => i % 2 === 0));
     const contentScale = current.open.width > 0 ? (Math.max(...xs) - Math.min(...xs)) / current.open.width : 1;
     frame = { shape: null, progress, contentScale, bodyHeight: Math.max(0, height - headerHeight), headerHeight,
-      summaryHeight: current.geometry.height, summaryIconInset: current.summaryIconInset,
+      summaryHeight: peeked && !expanded ? current.peek.height : current.geometry.height,
+      summaryScale: peeked && !expanded ? current.peek.height / current.closed.height : 1, summaryIconInset: current.summaryIconInset,
       summaryEdges: summaryEdges(current), bodyBox: { x: current.open.x - canvas.x, width: current.open.width }, ...extra };
-    shape('notch', points, canvas, current.display);
+    if (current.geometry.gapWidth > 0 && summaryVisible()) {
+      // Outer-edge scaling grows toward the fixed camera. Bound every frame,
+      // including spring overshoot, by the measured widths in screen points.
+      const gapLeft = current.geometry.centerX - current.geometry.gapWidth / 2 - canvas.x;
+      const gapRight = gapLeft + current.geometry.gapWidth;
+      const left = frame.summaryEdges.left + frame.summaryIconInset - current.summaryIconInset;
+      const leftScale = slots.left > 0 ? (gapLeft - 8 - left) / slots.left : Infinity;
+      const rightScale = slots.right > 0 ? (frame.summaryEdges.right - gapRight - 8) / slots.right : Infinity;
+      frame.summaryScale = Math.max(0, Math.min(frame.summaryScale, leftScale, rightScale));
+    }
+    // The camera cap must share the native material's compositor transaction.
+    // An SVG cap arrives later through Chromium, leaving a moving glass fringe.
+    const hardwareShade = current.geometry.notched && glass.notch?.hardwareShade === true
+      ? { ...notchGlassGeometry(current.geometry.height, frame.bodyHeight), progress: value } : undefined;
+    const hadMaterial = nativeMaterial.notch === true;
+    shape('notch', points, canvas, current.display, hardwareShade);
     frame.shape = shapes.notch;
+    // A failed native update removes the material immediately. Restore the
+    // renderer's SVG fallback with this completed frame, not at spring settle.
+    if (hadMaterial && nativeMaterial.notch !== true) send('notch', current);
     paintBlur(current, value);
     if (alive(windows.notch) && ready.notch) windows.notch.webContents.send('topNotch:motion', frame);
   }
@@ -525,12 +548,15 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
     motion = { id, current, from: commands || endpoints(current)[0], to: targetCommands(current),
       fromProgress, target, fromHeight, toHeight, spring, velocity, rate: 0, peek: peeked,
       fromSummaryHeight: frame?.summaryHeight ?? current.geometry.height,
+      toSummaryHeight: peeked && !expanded ? current.peek.height : current.geometry.height,
+      fromSummaryScale: frame?.summaryScale ?? 1,
+      toSummaryScale: peeked && !expanded ? current.peek.height / current.closed.height : 1,
       fromEdges: { ...(frame?.summaryEdges || summaryEdges(current)),
         left: (frame?.summaryEdges?.left ?? summaryEdges(current).left) + (frame?.summaryIconInset || 0) - current.summaryIconInset }, toEdges: summaryEdges(current),
       fromBox: frame?.bodyBox || { x: current.open.x - viewport.x, width: current.open.width },
       toBox: { x: current.open.x - viewport.x, width: current.open.width },
       duration: springDuration(spring, velocity), elapsed: 0 };
-    paint(current, motion.from, fromProgress, motion.fromHeight, { summaryHeight: motion.fromSummaryHeight, summaryEdges: motion.fromEdges, bodyBox: motion.fromBox });
+    paint(current, motion.from, fromProgress, motion.fromHeight, { summaryHeight: motion.fromSummaryHeight, summaryScale: motion.fromSummaryScale, summaryEdges: motion.fromEdges, bodyBox: motion.fromBox });
     visibility();
     if (prefersReducedMotion()) {
       windows.notch.webContents.send('topNotch:animate', { id, duration: 0 });
@@ -550,7 +576,9 @@ function createNotchController({ BrowserWindow, ipcMain, screen, getSettings,
     const value = done ? held.target : held.fromProgress + (held.target - held.fromProgress) * eased;
     const mix = (from, to) => Object.fromEntries(Object.keys(to).map(key => [key, from[key] + (to[key] - from[key]) * eased]));
     paint(held.current, interpolateCommands(held.from, held.to, eased), value,
-      held.fromHeight + (held.toHeight - held.fromHeight) * eased, { motionId: held.id, done, summaryHeight: held.fromSummaryHeight + (held.current.geometry.height - held.fromSummaryHeight) * eased, summaryEdges: mix(held.fromEdges, held.toEdges), bodyBox: mix(held.fromBox, held.toBox) });
+      held.fromHeight + (held.toHeight - held.fromHeight) * eased, { motionId: held.id, done, summaryHeight: held.fromSummaryHeight + (held.toSummaryHeight - held.fromSummaryHeight) * eased,
+        summaryScale: held.fromSummaryScale + (held.toSummaryScale - held.fromSummaryScale) * eased,
+        summaryEdges: mix(held.fromEdges, held.toEdges), bodyBox: mix(held.fromBox, held.toBox) });
     if (done && motion === held) {
       motion = null;
       const target = held.current.canvas;

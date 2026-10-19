@@ -399,20 +399,29 @@
       const budget = geometry.summaryBudget;
       const leftContent = head.querySelector('.notch-left .notch-slot-content');
       const rightContent = head.querySelector('.notch-right .notch-slot-content');
-      const gap = 12 * (Number(state.payload.appearance.zoomFactor) || 1);
-      const primaryRight = compact ? Math.min(budget, fitNotchSlot(rightContent, Infinity).minimum) : 0;
-      const left = fitNotchSlot(leftContent, compact ? Math.max(0, budget - primaryRight - gap) : budget);
-      const right = fitNotchSlot(rightContent, compact ? Math.max(0, budget - left.width - gap) : budget);
-      const firstBlock = [...leftContent.children].find(node => !node.hidden);
-      const firstIcon = firstBlock?.classList.contains('notch-summary-field') ? firstBlock.firstElementChild : firstBlock;
-      const firstMark = firstIcon?.querySelector('.edge-dock-mark');
-      const iconInset = firstMark ? notchLogicalPoint(Math.max(0, firstMark.getBoundingClientRect().left - leftContent.getBoundingClientRect().left)) : 0;
-      head.dataset.notchIconInset = iconInset;
-      const slots = { left: Math.ceil(notchLogicalPoint(left.width)), right: Math.ceil(notchLogicalPoint(right.width)), iconInset };
-      const key = JSON.stringify([slots, measurement?.measuring ? measurement.id : null]);
-      if (key !== lastNotchSlots) {
-        lastNotchSlots = key;
-        bridge.reportNotchSize(0, slots, measurement?.measuring ? { id: measurement.id } : undefined);
+      // Hover transforms are visual only. Fit at rest so live pushes and
+      // clock repaints cannot feed enlarged widths back into native layout.
+      const transforms = [leftContent.style.transform, rightContent.style.transform];
+      leftContent.style.transform = rightContent.style.transform = 'none';
+      try {
+        const gap = 12 * (Number(state.payload.appearance.zoomFactor) || 1);
+        const primaryRight = compact ? Math.min(budget, fitNotchSlot(rightContent, Infinity).minimum) : 0;
+        const left = fitNotchSlot(leftContent, compact ? Math.max(0, budget - primaryRight - gap) : budget);
+        const right = fitNotchSlot(rightContent, compact ? Math.max(0, budget - left.width - gap) : budget);
+        const firstBlock = [...leftContent.children].find(node => !node.hidden);
+        const firstIcon = firstBlock?.classList.contains('notch-summary-field') ? firstBlock.firstElementChild : firstBlock;
+        const firstMark = firstIcon?.querySelector('.edge-dock-mark');
+        const iconInset = firstMark ? notchLogicalPoint(Math.max(0, firstMark.getBoundingClientRect().left - leftContent.getBoundingClientRect().left)) : 0;
+        head.dataset.notchIconInset = iconInset;
+        const slots = { left: Math.ceil(notchLogicalPoint(left.width)), right: Math.ceil(notchLogicalPoint(right.width)), iconInset };
+        const key = JSON.stringify([slots, measurement?.measuring ? measurement.id : null]);
+        if (key !== lastNotchSlots) {
+          lastNotchSlots = key;
+          bridge.reportNotchSize(0, slots, measurement?.measuring ? { id: measurement.id } : undefined);
+        }
+      } finally {
+        leftContent.style.transform = transforms[0];
+        rightContent.style.transform = transforms[1];
       }
     }
     // The open panel has a fixed height; only the shell shape decides it.
@@ -505,10 +514,11 @@
         // The same value positions the summary; reading computed style after the
         // shape writes would force a style update on every animation frame.
         const summaryZoom = geometry.summaryZoom;
+        const summaryScale = Number.isFinite(frame.summaryScale) ? frame.summaryScale : 1;
         // Anchor the outer content edges to equal insets. Different glyph widths
         // cannot alter the mirrored margins, including interrupted motion.
-        left.style.transform = `translateX(${((frame.summaryEdges?.left ?? restingLeft) - restingLeft + (frame.summaryIconInset || 0) - (Number(header.dataset.notchIconInset) || 0)) / summaryZoom}px)`;
-        right.style.transform = `translateX(${((frame.summaryEdges?.right ?? restingRight) - restingRight) / summaryZoom}px)`;
+        left.style.transform = `translateX(${((frame.summaryEdges?.left ?? restingLeft) - restingLeft + (frame.summaryIconInset || 0) - (Number(header.dataset.notchIconInset) || 0)) / summaryZoom}px) scale(${summaryScale})`;
+        right.style.transform = `translateX(${((frame.summaryEdges?.right ?? restingRight) - restingRight) / summaryZoom}px) scale(${summaryScale})`;
       }
       const body = contentLayer.querySelector('.notch-body');
       if (body) {
@@ -620,6 +630,9 @@
       render: renderNotch,
       applyMotion: applyNotchMotion,
       applyAppearance(payload) {
+        // Material ownership must update even when a tooltip holds the panel's
+        // content render; otherwise a failed native scrim leaves the SVG hidden.
+        root.classList.toggle('has-native-hardware-shade', payload.nativeHardwareShade === true);
         document.documentElement.classList.toggle('notch-black', payload.style === 'black');
         document.documentElement.classList.toggle('notch-hardware-light', payload.style !== 'black' && payload.geometry?.notched === true
           && window.TokenMonitorThemePresets?.isLightHex(payload.appearance?.themeColors?.bg) === true);
