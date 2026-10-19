@@ -61,6 +61,8 @@ The collector owns one `selfSyncThrottle.js` instance shared by provider self-sy
 
 `SIGTERM` requests termination; it does not establish exit. Aborts, timeouts and pipe failures hold the replacement barrier until `close`, escalating to `SIGKILL` when needed. A bounded final grace reports `subprocess-termination-unconfirmed` instead of deadlocking; generation fences still reject late output.
 
+On Windows, tokscale scans and Antigravity syncs are lowered to below-normal priority right after spawn (`subprocessPriority.js`) to reduce CPU competition with foreground work. A subprocess still running after 10 seconds attempts to restore its starting priority, limiting prolonged low-priority delays under sustained CPU load. A subprocess that starts at below-normal or lower priority is left alone. Both adjustments are best effort and never fail collection. macOS and Linux retain their starting priority because unprivileged processes generally cannot restore a lowered nice value, which could delay collection beyond its timeout under contention.
+
 Failed usage reconfiguration restores the last-known-good runtime and retries the latest desired settings with bounded backoff. Exhaustion is reported; a newer setting starts a fresh retry budget.
 
 ### Usage worker
