@@ -150,6 +150,10 @@ Manual device removal requires a known remote device marked stale in main's late
 
 ## Data flow contract
 
+**Node Hub persistence.** Saves are synchronous by default; opt-in batching uses a fixed first-upload deadline without delaying API/SSE updates. Snapshots use compact JSON and atomic replacement. Device deletion, subscriptions, shared settings/title policies and startup title cleanup persist immediately; preserve their rollback contracts. Failed saves retain pending data for retry. File readers can lag and abrupt termination can lose pending updates; see [configuration](configuration.md) for options and operational tradeoffs.
+
+**Node Hub shutdown.** `stop()` closes HTTP/direct-ingest admission before ending response-owned SSE streams, flushes before draining admitted HTTP bodies, and flushes again afterward. Force-close lingering connections after the drain timer; event-loop load can delay timers, so they are not hard bounds. Concurrent stops share completion; final-save failures reject without discarding pending data. Clear batch timers on stop and re-arm retained data on successful restart. Standalone signal handlers use this lifecycle and report failures. The [API reference](API.md) defines client-visible shutdown behavior.
+
 `collectUsageOnce()` supplies usage. `DeviceState` combines it with the runtime envelope and limits; limits-only updates retain the usage `updatedAt`, and cold previews wait for a complete baseline. Hubs normalize device records with `normalizeDeviceRecord()` and aggregate on read with `aggregateDevices()`. Neither Hub needs provider credentials. The [API reference](API.md) defines the common Node/Worker wire contract.
 
 Settings keys, env vars, CLI flags, endpoints and wire fields have external users: treat incompatible changes as breaking and plan migration. Stale devices intentionally remain in stats with `stale: true`; they are not silently deleted.
