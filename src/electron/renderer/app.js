@@ -13415,17 +13415,11 @@ function syncDockSizeControls(surface) {
 // read from the saved settings underneath them.
 const NOTCH_HOVER_DELAY_DEFAULT_MS = 0;
 
-// Hover either grows the resting entry (a click opens it) or opens it after
-// the chosen duration; the duration only applies to the second, scroll
-// gestures only to the first.
+// Hover duration applies only to hover-to-open.
 function syncNotchHoverControls() {
   const action = state.settings?.notchHoverAction === 'open' ? 'open' : 'peek';
   for (const input of els.notchHoverActionInputs) input.checked = input.value === action;
   els.notchHoverDelayRow?.classList.toggle('hidden', action !== 'open');
-  if (els.notchSwipeGesturesInput) {
-    els.notchSwipeGesturesInput.closest('.settings-item')?.classList.toggle('hidden', action !== 'peek');
-    els.notchSwipeGesturesInput.checked = state.settings?.notchSwipeGestures !== false;
-  }
   if (els.notchHoverDelayInput && document.activeElement !== els.notchHoverDelayInput) {
     const delay = Number(state.settings?.notchHoverDelay);
     els.notchHoverDelayInput.value = String(Number.isFinite(delay) ? delay : NOTCH_HOVER_DELAY_DEFAULT_MS);
@@ -13503,6 +13497,7 @@ function syncDockControls() {
   syncNotchCapabilities();
   if (els.notchProgressiveBlurInput) els.notchProgressiveBlurInput.checked = state.settings?.notchProgressiveBlur !== false;
   if (els.notchHapticInput) els.notchHapticInput.checked = state.settings?.notchHaptic !== false;
+  if (els.notchSwipeGesturesInput) els.notchSwipeGesturesInput.checked = state.settings?.notchSwipeGestures !== false;
   syncNotchHoverControls();
   if (els.notchHideSummaryInFullScreenInput) els.notchHideSummaryInFullScreenInput.checked = state.settings?.notchHideSummaryInFullScreen !== false;
   els.edgeDockComposerRow?.classList.toggle('hidden', !enabled);
