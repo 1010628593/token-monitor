@@ -1674,21 +1674,23 @@
           <span class="live-token-rate-icon" aria-hidden="true"></span>
           <span id="liveTokenRateValue" class="live-token-rate-value">— tok/s</span>
         </button>
-        <div id="appUpdatePill" class="update-pill hidden">
-          <button id="appUpdatePillAction" type="button" class="update-pill-action" data-status="available">
-            <svg class="update-pill-progress" viewBox="0 0 34 30" aria-hidden="true">
-              <path id="appUpdatePillProgress" class="update-pill-progress-bar" pathLength="100" d="M17 .5H27A6.5 6.5 0 0 1 33.5 7V23A6.5 6.5 0 0 1 27 29.5H7A6.5 6.5 0 0 1 .5 23V7A6.5 6.5 0 0 1 7 .5Z" />
-            </svg>
-            <span class="update-pill-icon" aria-hidden="true"></span>
-            <span class="update-pill-badge" aria-hidden="true"></span>
-          </button>
-        </div>
-        <span id="footerActionSlot">
-          <span id="utilityActions" class="utility-actions">
-            <button id="refreshButton" class="refresh-button" aria-label="Refresh"><span class="refresh-button-icon" aria-hidden="true"></span><span class="refresh-button-spinner" aria-hidden="true"></span></button>
-            <button id="settingsButton" class="icon-button settings-icon-button" aria-label="Settings"></button>
+        <div class="footer-update-actions">
+          <div id="appUpdatePill" class="update-pill hidden">
+            <button id="appUpdatePillAction" type="button" class="update-pill-action" data-status="available">
+              <svg class="update-pill-progress" viewBox="0 0 34 30" aria-hidden="true">
+                <path id="appUpdatePillProgress" class="update-pill-progress-bar" pathLength="100" d="M17 .5H27A6.5 6.5 0 0 1 33.5 7V23A6.5 6.5 0 0 1 27 29.5H7A6.5 6.5 0 0 1 .5 23V7A6.5 6.5 0 0 1 7 .5Z" />
+              </svg>
+              <span class="update-pill-icon" aria-hidden="true"></span>
+              <span class="update-pill-badge" aria-hidden="true"></span>
+            </button>
+          </div>
+          <span id="footerActionSlot">
+            <span id="utilityActions" class="utility-actions">
+              <button id="refreshButton" class="refresh-button" aria-label="Refresh"><span class="refresh-button-icon" aria-hidden="true"></span><span class="refresh-button-spinner" aria-hidden="true"></span></button>
+              <button id="settingsButton" class="icon-button settings-icon-button" aria-label="Settings"></button>
+            </span>
           </span>
-        </span>
+        </div>
       </footer>
       <div id="appUpdatePopover" class="app-update-popover" popover="manual" role="dialog" aria-labelledby="appUpdatePopoverTitle">
         <div class="app-update-popover-header">
