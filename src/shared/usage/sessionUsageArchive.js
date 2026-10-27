@@ -17,6 +17,7 @@ const {
 } = require('../archiveHelpers');
 const { readJson, sharedDataDir, writeJsonAtomic } = require('../config');
 const { filterReasonixSyntheticSessions, isReasonixSyntheticSession } = require('../providers/reasonix/sessionGuard');
+const { isForkEraPromaSession } = require('../providers/proma/sessionGuard');
 const { splitClientIdFor } = require('../clientIdentitySplits');
 const {
   isLegacyCursorEntry,
@@ -449,6 +450,8 @@ function applySessionUsageArchive(summary, archive, options = {}) {
   // Select zeros too, so a newer zero cannot resurrect an older alias's usage.
   const retainedRows = new Map();
   for (const [archiveKey, entry] of Object.entries(normalizedArchive.sessions)) {
+    // Retained, not replayed: see providers/proma/sessionGuard.js.
+    if (isForkEraPromaSession(entry.client, entry.sessionId)) continue;
     for (const periodName of PERIODS) {
       const session = entry.periods?.[periodName];
       if (!session || !shouldApplyPeriod(periodName, entry, now)) continue;
