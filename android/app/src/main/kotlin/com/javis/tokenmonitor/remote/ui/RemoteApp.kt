@@ -22,15 +22,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import android.graphics.RenderEffect as AndroidRenderEffect
-import android.graphics.RuntimeShader
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.activity.compose.BackHandler
@@ -46,8 +40,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Box
@@ -99,13 +91,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -176,37 +172,38 @@ fun RemoteApp(model: RemoteViewModel) {
 }
 
 @Composable
-private fun AppBackdrop(content: @Composable () -> Unit) {
+private fun AppBackdrop(fade: Boolean = true, content: @Composable () -> Unit) {
     val dark = androidx.compose.foundation.isSystemInDarkTheme()
+    val top = if (dark) Color(0xFF000000) else Color(0xFFE4EDF6)
+    val mid = if (dark) Color(0xFF0C0C0E) else Color(0xFFF4F7FB)
+    val bottom = if (dark) Color(0xFF000000) else Color(0xFFE7EEF4)
     Box(Modifier.fillMaxSize()) {
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    if (dark) {
-                        listOf(Color(0xFF000000), Color(0xFF0C0C0E), Color(0xFF000000))
-                    } else {
-                        listOf(Color(0xFFE4EDF6), Color(0xFFF4F7FB), Color(0xFFE7EEF4))
-                    }
-                )
-            )
-        )
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(top, mid, bottom))))
         Box(
             Modifier
                 .size(340.dp)
                 .align(Alignment.TopEnd)
                 .offset(x = 90.dp, y = (-80).dp)
-                .blur(72.dp, BlurredEdgeTreatment.Unbounded)
-                .background(Color(0xFF73BDF5).copy(alpha = if (dark) 0.22f else 0.55f), CircleShape)
+                .background(Brush.radialGradient(listOf(Color(0xFF73BDF5).copy(alpha = if (dark) 0.22f else 0.55f), Color.Transparent)))
         )
         Box(
             Modifier
                 .size(300.dp)
                 .align(Alignment.BottomStart)
                 .offset(x = (-80).dp, y = 30.dp)
-                .blur(80.dp, BlurredEdgeTreatment.Unbounded)
-                .background(Color(0xFFB7EAD4).copy(alpha = if (dark) 0.14f else 0.50f), CircleShape)
+                .background(Brush.radialGradient(listOf(Color(0xFFB7EAD4).copy(alpha = if (dark) 0.14f else 0.50f), Color.Transparent)))
         )
         Box(Modifier.fillMaxSize()) { content() }
+        if (fade) {
+            val fadeHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 16.dp
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(fadeHeight)
+                    .background(Brush.verticalGradient(listOf(top, top.copy(alpha = 0f))))
+            )
+        }
     }
 }
 
@@ -343,7 +340,7 @@ private fun BoxScope.GlassRefreshIndicator(state: PullToRefreshState, refreshing
         }
     }
     val arc = LocalGraphiteExtraColors.current.chartPrimary
-    SoftGlass(
+        SoftGlass(
         Modifier
             .align(Alignment.TopCenter)
             .offset(y = top + 8.dp + 28.dp * travel)
@@ -351,7 +348,8 @@ private fun BoxScope.GlassRefreshIndicator(state: PullToRefreshState, refreshing
             .graphicsLayer { alpha = if (refreshing) 1f else travel.coerceIn(0f, 1f) },
         shape = CircleShape,
         corner = 20.dp,
-        veil = if (dark) 0.72f else 0.9f
+        veil = if (dark) 0.72f else 0.9f,
+        blur = true
     ) {
         Canvas(Modifier.fillMaxSize().padding(11.dp)) {
             drawArc(
@@ -402,7 +400,7 @@ private fun GlassField(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        SoftGlass(Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(18.dp), corner = 18.dp, veil = 1f) {
+        SoftGlass(Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(18.dp), corner = 18.dp, veil = 1f, blur = true) {
             Box(Modifier.fillMaxSize().padding(horizontal = 16.dp), contentAlignment = Alignment.CenterStart) {
                 BasicTextField(
                     value = value,
@@ -534,9 +532,9 @@ private fun SettingsScreen(
 ) {
     var draftUrl by remember(url) { mutableStateOf(url) }
     var secret by remember { mutableStateOf("") }
-    AppBackdrop {
+    AppBackdrop(fade = false) {
         LazyColumn(
-            Modifier.fillMaxSize().statusBarFade(),
+            Modifier.fillMaxSize(),
             contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -565,67 +563,11 @@ private fun SettingsScreen(
     }
 }
 
-private const val STATUS_BAR_FADE = """
-uniform shader content;
-uniform float clearPx;
-uniform float fadePx;
-half4 main(float2 p) {
-    if (p.y >= fadePx) {
-        return content.eval(p);
-    }
-    if (p.y <= clearPx) {
-        return half4(0.0, 0.0, 0.0, 0.0);
-    }
-    float t = clamp((p.y - clearPx) / (fadePx - clearPx), 0.0, 1.0);
-    float radius = (1.0 - t) * (1.0 - t) * 22.0;
-    half4 sum = half4(0.0, 0.0, 0.0, 0.0);
-    float weight = 0.0;
-    for (int i = -6; i <= 6; i++) {
-        float fi = float(i);
-        float k = exp(-(fi * fi) / (radius * radius + 1.0));
-        sum += content.eval(p + float2(0.0, fi * 2.0)) * k;
-        weight += k;
-    }
-    float alpha = t * t * (3.0 - 2.0 * t);
-    return (sum / weight) * alpha;
-}
-"""
-
 @Composable
 private fun pageContentPadding(): PaddingValues {
     val density = LocalDensity.current
     val top = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
     return PaddingValues(start = 16.dp, end = 16.dp, top = top + 28.dp, bottom = 108.dp)
-}
-
-@Composable
-private fun Modifier.statusBarFade(): Modifier {
-    val density = LocalDensity.current
-    val clearPx = WindowInsets.statusBars.getTop(density).toFloat()
-    val fadePx = clearPx + with(density) { 16.dp.toPx() }
-    val shader = remember { if (Build.VERSION.SDK_INT >= 33) RuntimeShader(STATUS_BAR_FADE) else null }
-    return if (shader != null) {
-        graphicsLayer {
-            shader.setFloatUniform("clearPx", clearPx)
-            shader.setFloatUniform("fadePx", fadePx)
-            renderEffect = AndroidRenderEffect.createRuntimeShaderEffect(shader, "content").asComposeRenderEffect()
-        }
-    } else {
-        graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
-            drawContent()
-            val clear = (clearPx / size.height).coerceIn(0f, 1f)
-            val end = (fadePx / size.height).coerceIn(clear, 1f)
-            drawRect(
-                brush = Brush.verticalGradient(
-                    0f to Color.Transparent,
-                    clear to Color.Transparent,
-                    end to Color.Black,
-                    1f to Color.Black
-                ),
-                blendMode = BlendMode.DstIn
-            )
-        }
-    }
 }
 
 @Composable
@@ -677,8 +619,12 @@ private fun GlassIconButton(icon: Int, description: String, onClick: () -> Unit)
 }
 
 @Composable
-private fun GraphitePanel(modifier: Modifier = Modifier.fillMaxWidth(), content: @Composable () -> Unit) {
-    SoftGlass(modifier, shape = RoundedCornerShape(28.dp), corner = 28.dp, veil = 1f, content = { content() })
+private fun GraphitePanel(
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    blur: Boolean = false,
+    content: @Composable () -> Unit
+) {
+    SoftGlass(modifier, shape = RoundedCornerShape(28.dp), corner = 28.dp, veil = 1f, blur = blur, content = { content() })
 }
 
 @Composable
@@ -688,7 +634,7 @@ private fun selectionThumb(): Color =
 @Composable
 private fun PeriodControl(selected: PeriodId, onSelect: (PeriodId) -> Unit) {
     val options = listOf(PeriodId.Today to R.string.today, PeriodId.Month to R.string.month, PeriodId.AllTime to R.string.all_time)
-    SoftGlass(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp), corner = 24.dp, veil = 1f) {
+    SoftGlass(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp), corner = 24.dp, veil = 1f, blur = true) {
         SelectionCapsule(
             selected = options.indexOfFirst { it.first == selected }.coerceAtLeast(0),
             count = options.size,
@@ -729,7 +675,7 @@ private fun UsagePage(state: UiState, model: RemoteViewModel, onSettings: () -> 
     val period = snapshot?.period(state.period)
     val extra = LocalGraphiteExtraColors.current
     LazyColumn(
-        Modifier.fillMaxSize().statusBarFade(),
+        Modifier.fillMaxSize(),
         contentPadding = pageContentPadding(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -746,7 +692,7 @@ private fun UsagePage(state: UiState, model: RemoteViewModel, onSettings: () -> 
             item { Text(stringResource(R.string.retry), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             item {
-                GraphitePanel {
+                GraphitePanel(blur = true) {
                     Column(Modifier.padding(16.dp)) {
                         Text(
                             stringResource(R.string.usage_total),
@@ -757,7 +703,8 @@ private fun UsagePage(state: UiState, model: RemoteViewModel, onSettings: () -> 
                             period.totalTokens,
                             MaterialTheme.typography.displaySmall,
                             color = extra.metricNumber,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            roll = true
                         )
                         RollingText(
                             stringResource(R.string.hero_cost, Format.costUsd(period.costUsd)),
@@ -810,7 +757,7 @@ private fun UsagePage(state: UiState, model: RemoteViewModel, onSettings: () -> 
 private fun LimitsPage(state: UiState, onSettings: () -> Unit, onBack: () -> Unit) {
     val providers = state.snapshot?.providers.orEmpty()
     LazyColumn(
-        Modifier.fillMaxSize().statusBarFade(),
+        Modifier.fillMaxSize(),
         contentPadding = pageContentPadding(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -866,20 +813,27 @@ private fun WindowRow(window: LimitWindow) {
                         Modifier.fillMaxWidth(fraction).fillMaxHeight().background(extra.chartPrimary)
                     )
                 }
-                RollingText(
+                Text(
                     stringResource(R.string.remaining_percent, left),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (left < 20) extra.warning else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (left < 20) extra.warning else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
                 )
             }
             window.metric == "credits" && money != null -> {
-                RollingText(Format.amount(money, window.currency), style = MaterialTheme.typography.titleLarge, color = extra.metricNumber)
+                FittedLine(
+                    Format.amount(money, window.currency),
+                    MaterialTheme.typography.titleLarge,
+                    extra.metricNumber,
+                    Modifier.fillMaxWidth()
+                )
             }
             percent != null -> {
-                    RollingText(
+                    Text(
                         stringResource(R.string.remaining_percent, (100.0 - percent).roundToInt().coerceIn(0, 100)),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
                     )
             }
         }
@@ -902,7 +856,7 @@ private fun AttributionPage(
 ) {
     val total = state.snapshot?.period(state.period)?.totalTokens ?: 0L
     LazyColumn(
-        Modifier.fillMaxSize().statusBarFade(),
+        Modifier.fillMaxSize(),
         contentPadding = pageContentPadding(),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -947,7 +901,7 @@ private fun AnalysisPage(state: UiState, onSettings: () -> Unit, onPeriod: (Peri
         label = "analysis"
     ) { current ->
         LazyColumn(
-            Modifier.fillMaxSize().statusBarFade(),
+            Modifier.fillMaxSize(),
             contentPadding = pageContentPadding(),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -1143,7 +1097,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.rankedRows(
 @Composable
 private fun <T> ChoiceRow(options: List<Pair<T, Int>>, selected: T, onSelect: (T) -> Unit) {
     val index = options.indexOfFirst { it.first == selected }.coerceAtLeast(0)
-    SoftGlass(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp), corner = 24.dp, veil = 1f) {
+    SoftGlass(Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(24.dp), corner = 24.dp, veil = 1f, blur = true) {
         SelectionCapsule(
             selected = index,
             count = options.size,
@@ -1201,10 +1155,17 @@ private fun HistoryCards(summary: HistorySummary) {
                             } else if (label == R.string.stat_peak) {
                                 FittedTokens(summary.peakDayTokens, MaterialTheme.typography.titleLarge, LocalGraphiteExtraColors.current.metricNumber, Modifier.fillMaxWidth())
                             } else {
-                                RollingText(
+                                val prose = label == R.string.stat_favorite_model || label == R.string.stat_active_time
+                                val style = if (prose) {
+                                    MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Default)
+                                } else {
+                                    MaterialTheme.typography.titleLarge
+                                }
+                                FittedLine(
                                     value.orEmpty(),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = LocalGraphiteExtraColors.current.metricNumber
+                                    style,
+                                    LocalGraphiteExtraColors.current.metricNumber,
+                                    Modifier.fillMaxWidth()
                                 )
                             }
                         }
@@ -1230,6 +1191,8 @@ private fun ValueBars(bars: List<ChartBar>, money: Boolean = false, showAxis: Bo
         null -> "—"
         else -> if (money) Format.costUsd(amount.toDouble()) else Format.compactTokens(amount.toLong())
     }
+    val haptic = LocalHapticFeedback.current
+    val tick = if (bars.size > 12) HapticFeedbackType.SegmentFrequentTick else HapticFeedbackType.SegmentTick
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(current.caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f), maxLines = 1)
@@ -1239,11 +1202,14 @@ private fun ValueBars(bars: List<ChartBar>, money: Boolean = false, showAxis: Bo
             Modifier
                 .fillMaxWidth()
                 .height(if (showAxis) 112.dp else 88.dp)
-                .pointerInput(bars.size) {
+                .pointerInput(bars.size, tick) {
                     val slop = viewConfiguration.touchSlop
                     fun select(x: Float) {
                         if (bars.isEmpty() || size.width <= 0) return
-                        selected = (x / size.width * bars.size).toInt().coerceIn(0, bars.lastIndex)
+                        val next = (x / size.width * bars.size).toInt().coerceIn(0, bars.lastIndex)
+                        if (next == selected) return
+                        selected = next
+                        haptic.performHapticFeedback(tick)
                     }
                     awaitEachGesture {
                         val down = awaitFirstDown()
@@ -1418,7 +1384,14 @@ private fun UsageAmountRow(name: String, tokens: Long, total: Long) {
                         style = nameStyle
                     )
                     Spacer(Modifier.weight(1f))
-                    RollingText(numberText, style = numberStyle, color = extra.metricNumber)
+                    Text(
+                        numberText,
+                        style = numberStyle,
+                        color = extra.metricNumber,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Clip
+                    )
                 }
             }
             ShareBar(tokens, total)
@@ -1441,7 +1414,65 @@ private fun ShareBar(tokens: Long, total: Long) {
 }
 
 @Composable
-private fun FittedTokens(value: Long, style: TextStyle, color: Color, modifier: Modifier = Modifier) {
+private fun FittedLine(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+    minFontSize: TextUnit = 13.sp
+) {
+    BoxWithConstraints(modifier) {
+        val limit = maxWidth
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val base = if (style.fontSize != TextUnit.Unspecified) style.fontSize.value else 22f
+        val floor = minFontSize.value.coerceIn(1f, base)
+        val fit = remember(text, style, base, floor, density.density, density.fontScale, limit) {
+            fun widthOf(sizeSp: Float): Float {
+                val px = measurer.measure(
+                    text,
+                    style = style.copy(fontSize = sizeSp.sp, lineHeight = TextUnit.Unspecified),
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Clip
+                ).size.width
+                return px / density.density
+            }
+            val budget = if (limit.value.isFinite()) (limit.value - 1f).coerceAtLeast(0f) else Float.POSITIVE_INFINITY
+            when {
+                widthOf(base) <= budget -> base
+                widthOf(floor) > budget -> floor
+                else -> {
+                    var low = floor
+                    var high = base
+                    while (high - low > 0.5f) {
+                        val mid = (low + high) / 2f
+                        if (widthOf(mid) <= budget) low = mid else high = mid
+                    }
+                    low
+                }
+            }
+        }
+        Text(
+            text,
+            modifier = Modifier.fillMaxWidth(),
+            style = style.copy(fontSize = fit.sp),
+            color = color,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun FittedTokens(
+    value: Long,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+    roll: Boolean = false
+) {
     BoxWithConstraints(modifier) {
         val limit = maxWidth
         val grouped = Format.groupedTokens(value)
@@ -1451,15 +1482,30 @@ private fun FittedTokens(value: Long, style: TextStyle, color: Color, modifier: 
             textWidth(grouped, style) <= limit -> grouped
             else -> compact
         }
-        RollingText(figure, style = style, color = color, modifier = Modifier.fillMaxWidth())
+        if (roll) {
+            RollingText(figure, style = style, color = color, modifier = Modifier.fillMaxWidth())
+        } else {
+            Text(
+                figure,
+                modifier = Modifier.fillMaxWidth(),
+                style = style,
+                color = color,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip
+            )
+        }
     }
 }
 
 @Composable
 private fun textWidth(text: String, style: TextStyle): Dp {
     val measurer = rememberTextMeasurer()
-    val px = measurer.measure(text, style = style, maxLines = 1, softWrap = false).size.width
-    return with(LocalDensity.current) { px.toDp() }
+    val density = LocalDensity.current
+    val px = remember(text, style, density.density, density.fontScale) {
+        measurer.measure(text, style = style, maxLines = 1, softWrap = false).size.width
+    }
+    return with(density) { px.toDp() }
 }
 
 @Composable

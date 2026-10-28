@@ -48,25 +48,23 @@ import com.javis.tokenmonitor.remote.R
 private const val TAG = "HyperGlass"
 
 object HyperOsGlass {
+    val supported: Boolean by lazy {
+        View::class.java.methods.any { it.name == "setMiBackgroundBlurMode" }
+    }
+
+    private val methods = HashMap<String, java.lang.reflect.Method?>()
+
     fun attachCapsule(view: View, radiusPx: Float) {
-        if (view.getTag() != "hyper-capsule") {
-            view.setTag("hyper-capsule")
-            val night = (view.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
-            // miuix 高级材质：背后模糊、按轮廓取形、两层混色。浅色是减淡白 + 一层很薄的正片叠底。
-            invoke(view, "clearMiBackgroundBlendColor")
-            invoke(view, "setMiBackgroundBlurMode", 1)
-            invoke(view, "setMiBackgroundBlurRadius", 80)
-            invoke(view, "setMiViewBlurMode", 1)
-            if (night) {
-                invoke(view, "addMiBackgroundBlendColor", 0x8C2A2A2A.toInt(), 19)
-                invoke(view, "addMiBackgroundBlendColor", 0x66000000, 3)
-            } else {
-                invoke(view, "addMiBackgroundBlendColor", 0xA6FFFFFF.toInt(), 18)
-                invoke(view, "addMiBackgroundBlendColor", 0x14000000, 3)
-            }
-            invoke(view, "setMiGlassClip", true)
+        if (!supported) return
+        val mark = mark(view, "hyper-capsule")
+        if (mark.fresh) {
+            applyPlate(view, radiusPx, capsule = true)
+            mark.fresh = false
         }
+        if (mark.width == view.width && mark.height == view.height && mark.corner == radiusPx) return
+        mark.width = view.width
+        mark.height = view.height
+        mark.corner = radiusPx
         invoke(view, "setMiGlass", floatArrayOf(1f, 100f, radiusPx, 1.05f, 1f))
         if (view.width > 0 && view.height > 0) {
             val path = Path().apply {
@@ -74,37 +72,59 @@ object HyperOsGlass {
             }
             invoke(view, "setMiBackgroundBlurPath", path)
         }
-        view.outlineProvider = object : ViewOutlineProvider() {
-            override fun getOutline(target: View, outline: Outline) {
-                if (target.width == 0 || target.height == 0) return
-                outline.setRoundRect(0, 0, target.width, target.height, target.height / 2f)
-            }
-        }
-        view.clipToOutline = true
+        applyOutline(view, radiusPx, capsule = true)
     }
 
     fun attach(view: View, cornerPx: Float) {
-        if (view.getTag() != "hyper-glass") {
-            view.setTag("hyper-glass")
-            val night = (view.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
-            invoke(view, "clearMiBackgroundBlendColor")
-            invoke(view, "setMiBackgroundBlurMode", 1)
-            invoke(view, "setMiBackgroundBlurRadius", 80)
-            invoke(view, "setMiViewBlurMode", 1)
-            if (night) {
-                invoke(view, "addMiBackgroundBlendColor", 0x8C2A2A2A.toInt(), 19)
-                invoke(view, "addMiBackgroundBlendColor", 0x66000000, 3)
-            } else {
-                invoke(view, "addMiBackgroundBlendColor", 0xA6FFFFFF.toInt(), 18)
-                invoke(view, "addMiBackgroundBlendColor", 0x14000000, 3)
-            }
+        if (!supported) return
+        val mark = mark(view, "hyper-glass")
+        if (mark.fresh) {
+            applyPlate(view, cornerPx, capsule = false)
+            mark.fresh = false
+        }
+        if (mark.width == view.width && mark.height == view.height && mark.corner == cornerPx) return
+        mark.width = view.width
+        mark.height = view.height
+        mark.corner = cornerPx
+        applyOutline(view, cornerPx, capsule = false)
+    }
+
+    private fun mark(view: View, kind: String): GlassMark {
+        val current = view.tag as? GlassMark
+        if (current != null && current.kind == kind) return current
+        val created = GlassMark(kind)
+        view.tag = created
+        return created
+    }
+
+    private fun applyPlate(view: View, cornerPx: Float, capsule: Boolean) {
+        val night = (view.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
+        // miuix 高级材质：背后模糊、按轮廓取形、两层混色。浅色是减淡白 + 一层很薄的正片叠底。
+        invoke(view, "clearMiBackgroundBlendColor")
+        invoke(view, "setMiBackgroundBlurMode", 1)
+        invoke(view, "setMiBackgroundBlurRadius", 80)
+        invoke(view, "setMiViewBlurMode", 1)
+        if (night) {
+            invoke(view, "addMiBackgroundBlendColor", 0x8C2A2A2A.toInt(), 19)
+            invoke(view, "addMiBackgroundBlendColor", 0x66000000, 3)
+        } else {
+            invoke(view, "addMiBackgroundBlendColor", 0xA6FFFFFF.toInt(), 18)
+            invoke(view, "addMiBackgroundBlendColor", 0x14000000, 3)
+        }
+        if (capsule) {
+            invoke(view, "setMiGlassClip", true)
+        } else {
             invoke(view, "setMiGlass", floatArrayOf(1f, 80f, cornerPx, 1.05f, 1f))
         }
+    }
+
+    private fun applyOutline(view: View, cornerPx: Float, capsule: Boolean) {
         view.outlineProvider = object : ViewOutlineProvider() {
             override fun getOutline(target: View, outline: Outline) {
                 if (target.width == 0 || target.height == 0) return
-                outline.setRoundRect(0, 0, target.width, target.height, cornerPx)
+                val radius = if (capsule) target.height / 2f else cornerPx
+                outline.setRoundRect(0, 0, target.width, target.height, radius)
             }
         }
         view.clipToOutline = true
@@ -120,11 +140,30 @@ object HyperOsGlass {
                 else -> arg?.javaClass
             }
         }.toTypedArray()
-        val method = view.javaClass.methods.firstOrNull { candidate ->
-            candidate.name == name && candidate.parameterTypes.contentEquals(types)
+        val key = buildString {
+            append(name)
+            types.forEach { append(':').append(it?.name) }
+        }
+        val method = synchronized(methods) {
+            if (methods.containsKey(key)) {
+                methods[key]
+            } else {
+                val found = view.javaClass.methods.firstOrNull { candidate ->
+                    candidate.name == name && candidate.parameterTypes.contentEquals(types)
+                }
+                methods[key] = found
+                found
+            }
         } ?: return
         runCatching { method.invoke(view, *args) }
             .onFailure { Log.i(TAG, "$name failed ${it.message}") }
+    }
+
+    private class GlassMark(val kind: String) {
+        var fresh = true
+        var width = -1
+        var height = -1
+        var corner = Float.NaN
     }
 }
 
@@ -134,6 +173,7 @@ fun SoftGlass(
     shape: Shape = RoundedCornerShape(28.dp),
     corner: Dp = 28.dp,
     veil: Float = 0.72f,
+    blur: Boolean = false,
     content: @Composable BoxScope.() -> Unit
 ) {
     val dark = isSystemInDarkTheme()
@@ -143,11 +183,13 @@ fun SoftGlass(
     val tint = if (dark) Color.Black.copy(alpha = frost) else Color.White.copy(alpha = frost)
     val stroke = if (dark) Color.White.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.72f)
     Box(modifier.clip(shape)) {
-        AndroidView(
-            modifier = Modifier.matchParentSize(),
-            factory = { context -> View(context) },
-            update = { view -> HyperOsGlass.attach(view, cornerPx) }
-        )
+        if (blur && HyperOsGlass.supported) {
+            AndroidView(
+                modifier = Modifier.matchParentSize(),
+                factory = { context -> View(context) },
+                update = { view -> HyperOsGlass.attach(view, cornerPx) }
+            )
+        }
         Box(Modifier.matchParentSize().background(tint))
         Box(Modifier.matchParentSize().border(0.5.dp, stroke, shape))
         Box(content = content)

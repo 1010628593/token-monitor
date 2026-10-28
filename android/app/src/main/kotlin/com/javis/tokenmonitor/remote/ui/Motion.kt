@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,7 +55,9 @@ object Motion {
 @Composable
 fun motionScale(): Float {
     val context = LocalContext.current
-    return Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+    return remember(context) {
+        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f)
+    }
 }
 
 @Composable
@@ -116,21 +119,29 @@ fun SelectionCapsule(
 
 @Composable
 fun RollingText(text: String, style: TextStyle, color: Color, modifier: Modifier = Modifier) {
+    val measurer = rememberTextMeasurer()
+    val enabled = motionScale() > 0f
+    val spec = motionTween<Float>(Motion.CountMs)
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         text.forEachIndexed { index, symbol ->
             key(text.length - index) {
-                RollingGlyph(symbol, style, color)
+                RollingGlyph(symbol, style, color, measurer, enabled, spec)
             }
         }
     }
 }
 
 @Composable
-private fun RollingGlyph(symbol: Char, style: TextStyle, color: Color) {
+private fun RollingGlyph(
+    symbol: Char,
+    style: TextStyle,
+    color: Color,
+    measurer: TextMeasurer,
+    enabled: Boolean,
+    spec: FiniteAnimationSpec<Float>
+) {
     var shown by remember { mutableStateOf(symbol) }
     val shift = remember { Animatable(0f) }
-    val enabled = motionScale() > 0f
-    val spec = motionTween<Float>(Motion.CountMs)
     LaunchedEffect(symbol, enabled) {
         if (shown == symbol) return@LaunchedEffect
         val roll = enabled && shown.isDigit() && symbol.isDigit()
@@ -144,10 +155,11 @@ private fun RollingGlyph(symbol: Char, style: TextStyle, color: Color) {
         shown = symbol
         shift.snapTo(0f)
     }
-    val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
     val sample = if (symbol.isDigit() || shown.isDigit()) "0" else symbol.toString()
-    val measured = measurer.measure(sample, style = style, maxLines = 1, softWrap = false).size
+    val measured = remember(measurer, sample, style, density.density, density.fontScale) {
+        measurer.measure(sample, style = style, maxLines = 1, softWrap = false).size
+    }
     val width = with(density) { measured.width.toDp() }
     val line = with(density) {
         val size = if (style.fontSize != androidx.compose.ui.unit.TextUnit.Unspecified) style.fontSize.toPx() else 16.dp.toPx()
