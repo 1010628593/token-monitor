@@ -117,4 +117,15 @@
     <string name="age_days">%1$d d ago</string>
     <string name="retry">Retry</string>
     <string name="cancel">Cancel</string>
+    <string name="poster_share">Share</string>
+    <string name="poster_brand">Token Monitor</string>
+    <string name="poster_kind_tokens">Usage</string>
+    <string name="poster_kind_cost">Spend</string>
+    <string name="poster_kind_models">Models</string>
+    <string name="poster_kind_tools">Tools</string>
+    <string name="poster_kind_trend">Trend</string>
+    <string name="poster_unit">tokens</string>
+    <string name="poster_versus">vs yesterday</string>
+    <string name="poster_saved">Saved to Pictures</string>
+    <string name="poster_save_failed">Couldn\'t save</string>
 </resources>

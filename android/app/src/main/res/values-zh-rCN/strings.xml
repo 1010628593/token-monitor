@@ -117,4 +117,15 @@
     <string name="age_days">%1$d 天前</string>
     <string name="retry">重试</string>
     <string name="cancel">取消</string>
+    <string name="poster_share">分享</string>
+    <string name="poster_brand">Token Monitor</string>
+    <string name="poster_kind_tokens">用量</string>
+    <string name="poster_kind_cost">花费</string>
+    <string name="poster_kind_models">模型</string>
+    <string name="poster_kind_tools">工具</string>
+    <string name="poster_kind_trend">趋势</string>
+    <string name="poster_unit">tokens</string>
+    <string name="poster_versus">较昨日</string>
+    <string name="poster_saved">已保存到相册</string>
+    <string name="poster_save_failed">未能保存</string>
 </resources>

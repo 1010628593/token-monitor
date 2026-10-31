@@ -117,6 +117,7 @@ import com.javis.tokenmonitor.remote.core.LimitWindow
 import com.javis.tokenmonitor.remote.core.PeriodId
 import com.javis.tokenmonitor.remote.core.StatsSnapshot
 import com.javis.tokenmonitor.remote.core.UNATTRIBUTED_ID
+import com.javis.tokenmonitor.remote.core.shareCards
 import com.javis.tokenmonitor.remote.data.ConnectResult
 import kotlin.math.roundToInt
 import java.time.DayOfWeek
@@ -212,20 +213,30 @@ private fun AppBackdrop(fade: Boolean = true, content: @Composable () -> Unit) {
 private fun Home(state: UiState, model: RemoteViewModel) {
     var settingsOpen by remember { mutableStateOf(false) }
     var limitsOpen by remember { mutableStateOf(false) }
+    var shareOpen by remember { mutableStateOf(false) }
+    val posters = state.snapshot?.let { shareCards(it, state.period) }.orEmpty()
     LaunchedEffect(state.connectResult) {
         if (state.connectResult is ConnectResult.Connected) settingsOpen = false
     }
-    BackHandler(enabled = settingsOpen || limitsOpen) {
-        if (settingsOpen) {
-            settingsOpen = false
-            model.clearConnectResult()
-        } else {
-            limitsOpen = false
+    LaunchedEffect(posters.isEmpty()) {
+        if (posters.isEmpty()) shareOpen = false
+    }
+    BackHandler(enabled = settingsOpen || limitsOpen || shareOpen) {
+        when {
+            shareOpen -> shareOpen = false
+            settingsOpen -> {
+                settingsOpen = false
+                model.clearConnectResult()
+            }
+            else -> limitsOpen = false
         }
     }
     val openSettings = {
         settingsOpen = true
     }
+    val cover = with(LocalDensity.current) { 16.dp.roundToPx() }
+    val coverShift = motionTween<androidx.compose.ui.unit.IntOffset>(Motion.PageMs)
+    val coverFade = motionTween<Float>(Motion.PageMs)
     Box(Modifier.fillMaxSize()) {
         val pullState = rememberPullToRefreshState()
         PullToRefreshBox(
@@ -268,7 +279,7 @@ private fun Home(state: UiState, model: RemoteViewModel) {
                         label = "tab"
                     ) { tab ->
                         when (tab) {
-                            Tab.Home -> UsagePage(state, model, openSettings) { limitsOpen = true }
+                            Tab.Home -> UsagePage(state, model, openSettings, { limitsOpen = true }, if (posters.isNotEmpty()) ({ shareOpen = true }) else null)
                             Tab.Tools -> AttributionPage(
                                 title = stringResource(R.string.nav_tools),
                                 state = state,
@@ -293,13 +304,23 @@ private fun Home(state: UiState, model: RemoteViewModel) {
                 }
             }
         }
-        SystemGlassNav(state.tab.ordinal, visible = !settingsOpen && !limitsOpen) { index ->
+        SystemGlassNav(state.tab.ordinal, visible = !settingsOpen && !limitsOpen && !shareOpen) { index ->
             model.selectTab(Tab.entries[index])
         }
+        AnimatedVisibility(
+            visible = shareOpen && posters.isNotEmpty(),
+            modifier = Modifier.fillMaxSize(),
+            enter = fadeIn(coverFade) + slideInVertically(coverShift) { cover },
+            exit = fadeOut(coverFade) + slideOutVertically(coverShift) { cover }
+        ) {
+            val periodLabel = when (state.period) {
+                PeriodId.Today -> stringResource(R.string.today)
+                PeriodId.Month -> stringResource(R.string.month)
+                PeriodId.AllTime -> stringResource(R.string.all_time)
+            }
+            ShareSheet(posters, periodLabel) { shareOpen = false }
+        }
     }
-    val cover = with(LocalDensity.current) { 16.dp.roundToPx() }
-    val coverShift = motionTween<androidx.compose.ui.unit.IntOffset>(Motion.PageMs)
-    val coverFade = motionTween<Float>(Motion.PageMs)
     AnimatedVisibility(
         visible = settingsOpen,
         modifier = Modifier.fillMaxSize(),
@@ -575,7 +596,8 @@ private fun PageHeader(
     title: String,
     subtitle: @Composable () -> Unit,
     onSettings: (() -> Unit)? = null,
-    onBack: (() -> Unit)? = null
+    onBack: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null
 ) {
     Row(
         Modifier.fillMaxWidth().padding(bottom = 20.dp),
@@ -589,6 +611,10 @@ private fun PageHeader(
             Text(title, style = MaterialTheme.typography.headlineSmall)
             subtitle()
         }
+        if (onShare != null) {
+            GlassIconButton(R.drawable.ic_share, stringResource(R.string.poster_share), onShare)
+            Spacer(Modifier.size(8.dp))
+        }
         if (onSettings != null) {
             GlassIconButton(R.drawable.ic_settings, stringResource(R.string.settings), onSettings)
         }
@@ -596,7 +622,7 @@ private fun PageHeader(
 }
 
 @Composable
-private fun GlassIconButton(icon: Int, description: String, onClick: () -> Unit) {
+internal fun GlassIconButton(icon: Int, description: String, onClick: () -> Unit) {
     val source = remember { MutableInteractionSource() }
     SoftGlass(
         Modifier.size(44.dp),
@@ -670,7 +696,13 @@ private fun PeriodControl(selected: PeriodId, onSelect: (PeriodId) -> Unit) {
 }
 
 @Composable
-private fun UsagePage(state: UiState, model: RemoteViewModel, onSettings: () -> Unit, onLimits: () -> Unit) {
+private fun UsagePage(
+    state: UiState,
+    model: RemoteViewModel,
+    onSettings: () -> Unit,
+    onLimits: () -> Unit,
+    onShare: (() -> Unit)?
+) {
     val snapshot = state.snapshot
     val period = snapshot?.period(state.period)
     val extra = LocalGraphiteExtraColors.current
@@ -683,7 +715,8 @@ private fun UsagePage(state: UiState, model: RemoteViewModel, onSettings: () -> 
             PageHeader(
                 title = stringResource(R.string.nav_home),
                 subtitle = { DeviceStatus(snapshot) },
-                onSettings = onSettings
+                onSettings = onSettings,
+                onShare = onShare
             )
             PeriodControl(state.period, model::selectPeriod)
         }
@@ -1657,7 +1690,7 @@ private fun ageText(ageMs: Long): String {
     }
 }
 
-private fun providerName(id: String): String =
+internal fun providerName(id: String): String =
     id.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
 
 private fun formatInstant(iso: String): String? = try {
