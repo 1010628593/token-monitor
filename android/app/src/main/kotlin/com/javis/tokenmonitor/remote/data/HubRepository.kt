@@ -2,10 +2,13 @@ package com.javis.tokenmonitor.remote.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import com.javis.tokenmonitor.remote.core.DayUsage
 import com.javis.tokenmonitor.remote.core.HubFailure
 import com.javis.tokenmonitor.remote.core.HubOutcome
 import com.javis.tokenmonitor.remote.core.SnapshotJson
+import com.javis.tokenmonitor.remote.core.StatsParser
 import com.javis.tokenmonitor.remote.core.StatsSnapshot
+import com.javis.tokenmonitor.remote.core.overlayLiveToday
 import com.javis.tokenmonitor.remote.core.SurfaceStamp
 import com.javis.tokenmonitor.remote.core.classifyHealth
 import com.javis.tokenmonitor.remote.core.classifyStatsResponse
@@ -80,6 +83,14 @@ class HubRepository(
     private var islandVisible = false
     private var streamJob: Job? = null
     private var streamGeneration = 0
+    private val historyLock = Any()
+    private var historyJob: Job? = null
+    @Volatile
+    private var historyGeneration = 0
+    @Volatile
+    private var loadedHistoryRevision: String? = null
+    @Volatile
+    private var inflightHistoryRevision: String? = null
 
     init {
         scope.launch {
@@ -138,7 +149,7 @@ class HubRepository(
             prefs.edit { it[RemoteKeys.hubUrl] = url }
             this.secret = effective
             _hubUrl.value = url
-            apply(outcome)
+            apply(outcome, forceHistory = true)
             if (foreground) {
                 stopStream()
                 startStream()
@@ -160,7 +171,7 @@ class HubRepository(
                 return HubFailure.Unreachable
             }
             val outcome = classifyStatsResponse(raw.status, raw.body)
-            apply(outcome)
+            apply(outcome, forceHistory = true)
             return (outcome as? HubOutcome.Failure)?.failure
         } finally {
             _refreshing.value = false
@@ -226,7 +237,7 @@ class HubRepository(
         streamJob = null
     }
 
-    private suspend fun apply(outcome: HubOutcome) {
+    private suspend fun apply(outcome: HubOutcome, forceHistory: Boolean = false) {
         val snapshot: StatsSnapshot?
         val cancel: Boolean
         mutex.withLock {
@@ -263,6 +274,62 @@ class HubRepository(
             return
         }
         if (snapshot != null) publishCurrent(force = false)
+        if (outcome is HubOutcome.Stats) refreshHistory(outcome.snapshot.historyRevision, forceHistory)
+    }
+
+    private fun refreshHistory(revision: String, force: Boolean) {
+        val key = revision.ifEmpty { "" }
+        val generation = synchronized(historyLock) {
+            if (!force && key.isNotEmpty() && key == loadedHistoryRevision) return
+            if (!force && key.isEmpty() && loadedHistoryRevision != null) return
+            if (!force && inflightHistoryRevision == key) return
+            inflightHistoryRevision = key
+            historyJob?.cancel()
+            ++historyGeneration
+        }
+        historyJob = scope.launch {
+            val days = loadHistoryDays()
+            if (!isActive || generation != historyGeneration) return@launch
+            if (days == null) {
+                synchronized(historyLock) {
+                    if (generation != historyGeneration) return@launch
+                    if (inflightHistoryRevision == key) inflightHistoryRevision = null
+                    loadedHistoryRevision = key.ifEmpty { "loaded" }
+                }
+                return@launch
+            }
+            val published = mutex.withLock {
+                if (generation != historyGeneration) return@withLock false
+                val current = _snapshot.value ?: return@withLock false
+                if (key.isNotEmpty() && current.historyRevision != key) return@withLock false
+                _snapshot.value = current.copy(historyDaily = days.overlayLiveToday(current.daily))
+                synchronized(historyLock) {
+                    if (generation == historyGeneration) {
+                        loadedHistoryRevision = key.ifEmpty { "loaded" }
+                        inflightHistoryRevision = null
+                    }
+                }
+                true
+            }
+            if (published) publishCurrent(force = false)
+        }
+    }
+
+    private fun loadHistoryDays(): List<DayUsage>? {
+        val config = currentConfig() ?: return null
+        val raw = try {
+            client.get("${config.first}/api/history", config.second)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: IOException) {
+            return null
+        }
+        if (raw.status !in 200..299) return null
+        return try {
+            StatsParser.parseHistoryDays(raw.body)
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private suspend fun publishCurrent(force: Boolean) {

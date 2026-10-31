@@ -68,6 +68,8 @@ import androidx.core.content.FileProvider
 import com.javis.tokenmonitor.remote.R
 import com.javis.tokenmonitor.remote.core.Format
 import com.javis.tokenmonitor.remote.core.ShareCard
+import com.javis.tokenmonitor.remote.core.ShareHeat
+import com.javis.tokenmonitor.remote.core.ShareMark
 import com.javis.tokenmonitor.remote.core.ShareRank
 import com.javis.tokenmonitor.remote.core.UNATTRIBUTED_ID
 import java.io.File
@@ -192,8 +194,9 @@ private fun drawTokens(canvas: Canvas, card: ShareCard.Tokens, titles: PosterTit
     canvas.drawText(titles.unit, INSET, baseline + 96f, textPaint(40f, MUTED, Typeface.SANS_SERIF, Paint.Align.LEFT, false))
     card.change?.let { drawChange(canvas, it, titles.versus, INSET, baseline + 176f) }
     if (card.bars.any { it.tokens > 0L }) {
-        drawColumns(canvas, card.bars, RectF(INSET, 860f, POSTER_WIDTH - INSET, 1160f), pill = true)
-        drawEnds(canvas, card.bars.first().label, card.bars.last().label, 1236f)
+        val area = RectF(INSET, 860f, POSTER_WIDTH - INSET, 1160f)
+        drawColumns(canvas, card.bars, area, pill = true)
+        drawAxis(canvas, card.bars, card.axisStart, card.axisEnd, area, 1236f)
     }
 }
 
@@ -249,11 +252,65 @@ private fun drawTools(
 
 private fun drawTrend(canvas: Canvas, card: ShareCard.Trend, title: String) {
     canvas.drawText(title, INSET, 320f, textPaint(80f, ACCENT, Typeface.SANS_SERIF, Paint.Align.LEFT, true))
-    val total = Format.compactTokens(card.bars.sumOf { it.tokens })
+    val heat = card.heat
+    val peak = heat?.cells?.maxOfOrNull { it.tokens } ?: card.bars.maxOfOrNull { it.tokens } ?: 0L
+    val total = Format.compactTokens(peak)
     val size = fittedSize(total, POSTER_WIDTH * 0.42f, 92f, 56f)
     canvas.drawText(total, POSTER_WIDTH - INSET, 320f, textPaint(size, INK, Typeface.MONOSPACE, Paint.Align.RIGHT, true))
-    drawColumns(canvas, card.bars, RectF(INSET, 460f, POSTER_WIDTH - INSET, 1140f), pill = false)
-    drawEnds(canvas, card.bars.first().label, card.bars.last().label, 1224f)
+    if (heat != null) {
+        drawHeat(canvas, heat, RectF(48f, 400f, POSTER_WIDTH - 48f, 1260f))
+        return
+    }
+    if (card.bars.isEmpty()) return
+    val area = RectF(INSET, 460f, POSTER_WIDTH - INSET, 1140f)
+    drawColumns(canvas, card.bars, area, pill = false)
+    drawAxis(canvas, card.bars, card.axisStart, card.axisEnd, area, 1224f)
+}
+
+private fun drawHeat(canvas: Canvas, heat: ShareHeat, area: RectF) {
+    if (heat.weeks <= 0 || heat.cells.isEmpty()) return
+    val weeks = heat.weeks
+    val rows = 7
+    val gap = 6f
+    val labelSpace = 44f
+    val cell = min(
+        (area.width() - gap * (weeks - 1)) / weeks,
+        (area.height() - labelSpace - gap * (rows - 1)) / rows
+    ).coerceAtLeast(6f)
+    val gridWidth = weeks * cell + (weeks - 1) * gap
+    val gridHeight = rows * cell + (rows - 1) * gap
+    val left = area.left + (area.width() - gridWidth) / 2f
+    val top = area.top + (area.height() - labelSpace - gridHeight) / 2f
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    val radius = cell * 0.22f
+    for (item in heat.cells) {
+        val x = left + item.column * (cell + gap)
+        val y = top + item.row * (cell + gap)
+        paint.color = heatFill(item.level, item.mark)
+        canvas.drawRoundRect(RectF(x, y, x + cell, y + cell), radius, radius, paint)
+    }
+    val text = textPaint(22f, MUTED, Typeface.SANS_SERIF, Paint.Align.LEFT, false)
+    var lastRight = -1000f
+    val baseline = top + gridHeight + text.textSize + 10f
+    for (month in heat.months) {
+        val x = left + month.column * (cell + gap)
+        val width = text.measureText(month.label)
+        if (x < lastRight + 6f) continue
+        canvas.drawText(month.label, x, baseline, text)
+        lastRight = x + width
+    }
+}
+
+private fun heatFill(level: Int, mark: ShareMark): Int {
+    if (level <= 0 && mark != ShareMark.Today) return 0xFFEEF3F8.toInt()
+    val index = level.coerceIn(0, 4)
+    val history = intArrayOf(0xFFEEF3F8.toInt(), 0xFFC5E6FF.toInt(), 0xFF7EBEFF.toInt(), 0xFF3B93F5.toInt(), 0xFF1F74E8.toInt())
+    val month = intArrayOf(0xFFEEF3F8.toInt(), 0xFFB7E7CC.toInt(), 0xFF5ED49A.toInt(), 0xFF22B573.toInt(), 0xFF0E9A5C.toInt())
+    return when (mark) {
+        ShareMark.Today -> 0xFFFF6A1A.toInt()
+        ShareMark.Month -> month[index]
+        ShareMark.None -> history[index]
+    }
 }
 
 private fun drawRankLine(
@@ -287,19 +344,59 @@ private fun drawRankLine(
     drawShareBar(canvas, RectF(textLeft, barTop, right, barTop + bar), row.fraction)
 }
 
+private data class BarLayout(val slot: Float, val gap: Float, val left: Float)
+
+private fun barLayout(count: Int, area: RectF): BarLayout {
+    val gap = if (count > 8) 16f else 24f
+    val natural = (area.width() - gap * (count - 1)) / count
+    val slot = if (count > 8) natural else natural.coerceAtMost(96f)
+    val group = count * slot + gap * (count - 1)
+    return BarLayout(slot, gap, area.left + (area.width() - group) / 2f)
+}
+
+private fun drawAxis(
+    canvas: Canvas,
+    bars: List<com.javis.tokenmonitor.remote.core.ShareBar>,
+    axisStart: String,
+    axisEnd: String,
+    area: RectF,
+    y: Float
+) {
+    if (bars.size > 8) {
+        drawEnds(canvas, axisStart.ifEmpty { bars.first().label }, axisEnd.ifEmpty { bars.last().label }, y)
+        return
+    }
+    val layout = barLayout(bars.size, area)
+    var left = layout.left
+    val paint = textPaint(22f, MUTED, Typeface.SANS_SERIF, Paint.Align.CENTER, false)
+    bars.forEach { bar ->
+        val parts = bar.label.split("–")
+        val center = left + layout.slot / 2f
+        if (parts.size == 2) {
+            canvas.drawText(parts[0], center, y, paint)
+            canvas.drawText(parts[1], center, y + 28f, paint)
+        } else {
+            paint.textSize = 22f
+            while (paint.textSize > 16f && paint.measureText(bar.label) > layout.slot + 8f) paint.textSize -= 1f
+            canvas.drawText(bar.label, center, y, paint)
+            paint.textSize = 22f
+        }
+        left += layout.slot + layout.gap
+    }
+}
+
 private fun drawColumns(canvas: Canvas, bars: List<com.javis.tokenmonitor.remote.core.ShareBar>, area: RectF, pill: Boolean) {
     if (bars.isEmpty()) return
-    val gap = if (bars.size > 10) 18f else 24f
-    val slot = min(44f, (area.width() - gap * (bars.size - 1)) / bars.size)
-    val group = bars.size * slot + gap * (bars.size - 1)
-    var left = area.left + (area.width() - group) / 2f
+    val layout = barLayout(bars.size, area)
+    val slot = layout.slot
+    var left = layout.left
     val peak = bars.maxOf { it.tokens }.coerceAtLeast(1L)
     val peakIndex = bars.indices.maxBy { bars[it].tokens }
     var peakCenter = left
     val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     bars.forEachIndexed { index, bar ->
         if (bar.tokens > 0L) {
-            val height = (area.height() * bar.tokens / peak.toFloat()).coerceAtLeast(slot)
+            val height = (area.height() * bar.tokens / peak.toFloat()).coerceAtLeast(min(slot, 48f))
             val rect = RectF(left, area.bottom - height, left + slot, area.bottom)
             val hot = pill && index == peakIndex
             val path = columnPath(rect)
@@ -330,10 +427,10 @@ private fun drawColumns(canvas: Canvas, bars: List<com.javis.tokenmonitor.remote
             paint.shader = null
         }
         if (index == peakIndex) peakCenter = left + slot / 2f
-        left += slot + gap
+        left += slot + layout.gap
     }
-    if (!pill) return
-    val value = Format.compactTokens(bars.sumOf { it.tokens })
+    if (!pill || bars[peakIndex].tokens <= 0L) return
+    val value = Format.compactTokens(bars[peakIndex].tokens)
     val text = textPaint(28f, 0xFFFFFFFF.toInt(), Typeface.SANS_SERIF, Paint.Align.LEFT, true)
     val emoji = 34f
     val width = emoji + text.measureText(value) + 48f

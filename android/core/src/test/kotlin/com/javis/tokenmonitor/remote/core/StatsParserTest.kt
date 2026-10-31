@@ -269,6 +269,47 @@ class StatsParserTest {
     }
 
     @Test
+    fun historyPayloadKeepsEveryDayAndStatsKeepTheRevision() {
+        val snapshot = StatsParser.parse(
+            """{"historyRevision":"rev-1","periods":{"today":{"totalTokens":1}}}""",
+            LocalDate.of(2026, 10, 31)
+        )
+        assertEquals("rev-1", snapshot.historyRevision)
+        val days = StatsParser.parseHistoryDays(
+            """
+            {
+              "daily": [
+                { "date": "2026-10-31T00:00:00.000Z", "tokens": 20, "cost": 2 },
+                { "date": "not-a-day", "tokens": 9 },
+                { "date": "2025-11-02", "tokens": 10, "cost": 1 }
+              ],
+              "monthly": [{ "month": "2024-01", "tokens": 999 }]
+            }
+            """.trimIndent()
+        )
+        assertEquals(listOf("2025-11-02", "2026-10-31"), days.map { it.date })
+        assertEquals(10L, days.first().tokens)
+        assertEquals(1.0, days.first().costUsd!!, 0.0001)
+    }
+
+    @Test
+    fun laterStatsKeepTheDailyArchiveAndPatchToday() {
+        val previous = StatsSnapshot(
+            historyRevision = "old",
+            historyDaily = listOf(DayUsage("2026-10-30", 1, 0.0), DayUsage("2026-10-31", 2, 0.0))
+        )
+        val next = StatsSnapshot(
+            historyRevision = "new",
+            daily = listOf(DayUsage("2026-10-31", 9, 1.0))
+        )
+        val reduced = reduceSnapshot(previous, HubOutcome.Stats(next))!!
+        assertEquals("new", reduced.historyRevision)
+        assertEquals(1L, reduced.historyDaily.single { it.date == "2026-10-30" }.tokens)
+        assertEquals(9L, reduced.historyDaily.single { it.date == "2026-10-31" }.tokens)
+        assertEquals(1.0, reduced.historyDaily.single { it.date == "2026-10-31" }.costUsd!!, 0.0001)
+    }
+
+    @Test
     fun nullHistoryPreviewLeavesTheWeekEmpty() {
         val snapshot = StatsParser.parse("""{"historyPreview":null,"periods":{"today":{"totalTokens":10}}}""")
         assertTrue(snapshot.week.isEmpty())

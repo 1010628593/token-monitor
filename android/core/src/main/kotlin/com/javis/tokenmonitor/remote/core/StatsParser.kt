@@ -37,7 +37,8 @@ object StatsParser {
             week = history.week,
             daily = history.daily,
             monthly = history.monthly,
-            history = history.summary
+            history = history.summary,
+            historyRevision = objectRoot.text("historyRevision")
         )
     }
 
@@ -213,6 +214,17 @@ object StatsParser {
             messages = node["messages"].asLong(),
             activeTimeMs = node["activeTimeMs"].asLong()
         )
+    }
+
+    fun parseHistoryDays(body: String): List<DayUsage> {
+        val root = json.parseToJsonElement(body).asObject() ?: throw IllegalArgumentException("history")
+        val daily = root["daily"].asArray() ?: throw IllegalArgumentException("history")
+        return daily.mapNotNull { element ->
+            val day = element.asObject() ?: return@mapNotNull null
+            val date = day.text("date").take(10)
+            if (!dayKey.matches(date)) return@mapNotNull null
+            DayUsage(date, day["tokens"].asLong(), day["cost"].asDoubleOrNull() ?: 0.0)
+        }.sortedBy { it.date }
     }
 
     private fun numberMap(node: JsonObject, name: String): Map<String, Double> {

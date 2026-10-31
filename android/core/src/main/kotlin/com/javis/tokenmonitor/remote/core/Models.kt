@@ -112,7 +112,9 @@ data class StatsSnapshot(
     val week: List<DayUsage> = emptyList(),
     val daily: List<DayUsage> = emptyList(),
     val monthly: List<MonthUsage> = emptyList(),
-    val history: HistorySummary? = null
+    val history: HistorySummary? = null,
+    val historyRevision: String = "",
+    val historyDaily: List<DayUsage> = emptyList()
 ) {
     fun period(id: PeriodId): PeriodSummary = when (id) {
         PeriodId.Today -> today
@@ -188,7 +190,23 @@ fun StatsSnapshot.applyFreshness(update: FreshnessUpdate): StatsSnapshot {
 }
 
 fun reduceSnapshot(previous: StatsSnapshot?, outcome: HubOutcome): StatsSnapshot? = when (outcome) {
-    is HubOutcome.Stats -> outcome.snapshot
+    is HubOutcome.Stats -> outcome.snapshot.retainDailyArchive(previous)
     is HubOutcome.Freshness -> previous?.applyFreshness(outcome.update)
     is HubOutcome.Failure -> previous
+}
+
+private fun StatsSnapshot.retainDailyArchive(previous: StatsSnapshot?): StatsSnapshot {
+    val archived = previous?.historyDaily.orEmpty()
+    if (archived.isEmpty()) return this
+    return copy(historyDaily = archived.overlayLiveToday(daily))
+}
+
+fun List<DayUsage>.overlayLiveToday(preview: List<DayUsage>): List<DayUsage> {
+    val today = preview.lastOrNull() ?: return this
+    val key = today.date.take(10)
+    if (!Regex("""\d{4}-\d{2}-\d{2}""").matches(key)) return this
+    val patched = map { row ->
+        if (row.date.take(10) == key) row.copy(tokens = today.tokens, costUsd = today.costUsd) else row
+    }
+    return if (patched.any { it.date.take(10) == key }) patched else patched + today
 }
